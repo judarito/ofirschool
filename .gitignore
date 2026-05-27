@@ -1,0 +1,11 @@
+node_modules
+.pnpm-store
+dist
+.wrangler
+.env
+.env.local
+.env.production
+coverage
+*.tsbuildinfo
+apps/api/.dev.vars
+packages/db/drizzle/meta

@@ -1,0 +1,15 @@
+name = "ofir-school-api"
+main = "src/index.ts"
+compatibility_date = "2026-05-16"
+workers_dev = true
+
+[vars]
+DEFAULT_TENANT_ID = "11111111-1111-1111-1111-111111111111"
+
+[[r2_buckets]]
+binding = "ADMISSIONS_BUCKET"
+bucket_name = "ofirschool-admissions"
+preview_bucket_name = "ofirschool-admissions-preview"
+
+[observability.logs]
+enabled = true

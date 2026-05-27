@@ -1,0 +1,18 @@
+{
+  "name": "ofir-school",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@10.11.0",
+  "scripts": {
+    "dev": "pnpm --parallel --filter @ofir/web --filter @ofir/api dev",
+    "dev:web": "pnpm --filter @ofir/web dev",
+    "dev:api": "pnpm --filter @ofir/api dev",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "pnpm -r lint",
+    "db:generate": "pnpm --filter @ofir/db drizzle-kit generate",
+    "db:migrate": "pnpm --filter @ofir/db migrate",
+    "db:push": "pnpm --filter @ofir/db drizzle-kit push",
+    "db:seed": "pnpm --filter @ofir/db seed"
+  }
+}

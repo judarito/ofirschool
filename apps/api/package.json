@@ -1,0 +1,28 @@
+{
+  "name": "@ofir/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "tsc -p tsconfig.json --noEmit",
+    "deploy": "wrangler deploy"
+  },
+  "dependencies": {
+    "@hono/zod-validator": "^0.7.2",
+    "@ofir/db": "workspace:*",
+    "@ofir/shared": "workspace:*",
+    "bcryptjs": "^3.0.2",
+    "drizzle-orm": "^0.44.4",
+    "hono": "^4.9.6",
+    "jose": "^6.1.0",
+    "zod": "^4.1.5"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250920.0",
+    "typescript": "^5.9.2",
+    "wrangler": "^4.38.0"
+  }
+}
