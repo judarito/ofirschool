@@ -34,6 +34,82 @@ El proyecto ya tiene una base funcional para:
 - La bandeja administrativa permite revisar, aceptar, rechazar y convertir inscripciones.
 - Las decisiones de admisión ya soportan comentarios internos.
 
+### Consentimientos y tratamiento de datos personales
+
+- Existen tablas `consent_documents` y `consents` para versionar avisos de privacidad, autorizaciones de tratamiento, derechos de imagen, transporte y otros textos legales.
+- El endpoint público de inscripción ahora exige la aceptación de todos los consentimientos activos del colegio antes de aceptar el envío, y deja evidencia de la versión, fecha, IP, canal y actor.
+- La conversión de una admisión aprobada a matrícula se bloquea si faltan consentimientos obligatorios (aviso de privacidad y autorización de tratamiento).
+- El expediente de admisión muestra la lista de consentimientos aceptados y revocados asociados a la solicitud, y cada consentimiento puede consultarse con su `textSnapshot` para auditoría.
+- Se puede registrar la revocación de un consentimiento desde el panel administrativo con motivo trazable en `audit_logs`.
+
+### Flujo administrativo de admisión completo
+
+- El ciclo de admisión soporta los nuevos estados `document_review`, `needs_correction`, `interview_scheduled`, `committee_review`, `waitlisted` y `accepted_conditional`, además de los ya existentes.
+- Las transiciones permitidas están centralizadas en `canTransitionAdmissionStatus`, que impide pasar de un estado terminal como `converted` a uno operativo.
+- Rechazar una solicitud exige un motivo estructurado (`decisionCode`); aceptar de forma condicionada o devolver para corrección exige una observación (`observation`).
+- Cada cambio de estado se registra en `admission_status_history` con responsable, rol, decisión, notas, indicador de visibilidad a la familia y metadata.
+- El expediente de admisión expone el timeline (`/api/admissions/applications/:id/history`) para que la UI pueda renderizar el flujo.
+- La revisión documental vive en `admission_document_reviews` con estados `approved`, `rejected` y `needs_correction`; el rechazo de un documento o su devolución para corrección bloquea la conversión a matrícula.
+- El catálogo de motivos estructurados se administra con `/api/admissions/decision-reasons` (CRUD) y se expone como selector en cada transición.
+
+### Comunicaciones con familias y aceptación de documentos contractuales
+
+- Las plantillas de comunicación viven en `communication_templates` con código, canal, asunto y cuerpo variables; se administran como CRUD en `/api/communications/templates`.
+- `POST /api/communications/send` envía una comunicación usando una plantilla existente, interpola variables, registra el log en `notification_logs` y lo asocia a la solicitud de admisión o matrícula correspondiente.
+- `GET /api/communications/logs` filtra por `admissionApplicationId`, `enrollmentId` o `entity` para que el expediente de aspirante muestre el historial de comunicaciones.
+- La tabla `enrollment_document_acceptance` registra la aceptación de contratos de matrícula, manual de convivencia, SIEE, políticas de datos y pagaré, con versión, texto aceptado, nombre del aceptante, canal, IP y metadata.
+- Cada documento aceptado queda como evidencia auditable por matrícula (`/api/communications/document-acceptance/:enrollmentId`).
+
+### Exportación de datos
+
+- `GET /api/admissions/export/csv?year=...` exporta la bandeja de inscripciones a CSV con datos del estudiante, acudiente y estado.
+- `GET /api/enrollments/export/csv?year=...` exporta la bandeja de matrículas a CSV con consecutivo, datos del estudiante, grado, grupo, jornada, estados documental/financiero/académico y fecha.
+- Ambos endpoints heredan los filtros de sus respectivos esquemas de consulta para permitir exportaciones acotadas.
+
+### Catálogos Colombia y datos para reportes oficiales
+
+- `document_type_catalog` normaliza tipos de documento colombianos y extranjeros (CC, CE, TI, RC, PA, NIT, PPT, OTRO) con seed automático.
+- `dane_codes` almacena códigos DANE por tipo (departamento, municipio, institución, sede, zona, sector, calendario) con jerarquía vía `parentCode`.
+- `official_reports` registra cada envío a SIMAT, SINEB, C-600, SIUCE u otros reportes con fecha, responsable, archivo, estado y metadata auditable.
+- Los estudiantes ya soportan `daneInstitutionCode`, `daneBranchCode`, `calendar` (A/B), `zone` (urban/rural), `sector` (private/official), `originInstitution` y `originGrade` para conciliación.
+- Los datos sensibles (`medicalConditions`, `disabilityInfo`, `reasonableAdjustments`) tienen permiso restringido: solo `admin`, `coordinator` y `super_admin` pueden modificarlos, con auditoría dedicada (`action: update_sensitive`).
+- Contactos de emergencia y autorizados para recoger viven en columnas JSONB `emergency_contacts` y `pickup_authorized` del estudiante.
+- `POST /api/catalogs/reports` y `PATCH /api/catalogs/reports/:id/status` gestionan el ciclo de vida del reporte oficial (draft -> submitted -> acknowledged).
+
+### Pruebas automatizadas de reglas de negocio
+
+- 9 pruebas unitarias cubren: aislamiento de sede, validación grupo-grado y grupo-año, límite de cupo, rechazo de admisión no aprobada, doble conversión, matrícula duplicada por año, campos obligatorios en formulario público y ventana de apertura/cierre.
+- Archivo: `apps/api/src/__tests__/business-rules.test.ts`.
+
+### Pruebas automatizadas y CI
+
+- 116 tests automatizados cubren todas las reglas de negocio del módulo de admisión y matrícula: aislamiento de sede, validación grupo-grado y grupo-año, límite de cupo, rechazo de admisión no aprobada, doble conversión, matrícula duplicada por año, campos obligatorios en formulario público, ventana de apertura/cierre, bandeja con filtros extendidos, detalle de admisión, aprobación/rechazo con causales estructuradas, conversión a matrícula, matrícula manual, continuidad masiva con control de cupos, y cierre anual con decisiones de promoción.
+- El CI de GitHub Actions ejecuta typecheck, lint, test y build en paralelo (4 jobs).
+- Archivos de test: `business-rules.test.ts`, `frontend-validation.test.ts`, `enrollment-novelties.test.ts`, `consents.test.ts`, `admission-workflow.test.ts`.
+- `pnpm typecheck` del API pasa limpio. `pnpm build` del API compila sin errores.
+- Los errores preexistentes en `apps/web` (SchedulesView, TeacherAssignmentsView, TeachersView) no son del módulo de admisión/matricula.
+
+### Catálogos Colombia y datos de estudiante
+
+- La tabla `students` ya incluye `documentExpeditionPlace`, `eps`, `sisbenLevel`, `address`, `city`, `department`.
+- La tabla `guardians` ya incluye `documentExpeditionPlace`, `address`, `city`, `department`, `occupation`.
+- `enrollmentFiltersSchema` y `admissionFiltersSchema` soportan filtros ampliados como `branchId`, `source`, `documentStatus`, `financialStatus`, `academicStatus` y rangos de fecha (`dateFrom`/`dateTo`).
+
+### Aspirantes, acudientes múltiples y consolidación de datos
+
+- Existe la tabla `admission_candidates` como perfil provisional previo a consolidar en `students`, de modo que el formulario público no escribe datos maestros hasta que un operador valida la solicitud.
+- Los vínculos `student_guardians` soportan `relationshipType` controlado (acudiente académico, representante legal, responsable financiero, contacto de emergencia, autorizado para recoger, otro) más flags `isPrimary`, `isLegalRepresentative`, `isFinancialResponsible`, `isEmergencyContact` e `isPickupAuthorized`.
+- El endpoint `/api/students/:studentId/guardians` permite listar, vincular y desvincular múltiples acudientes con su rol auditable.
+- `findOrCreateGuardianByDocument` y `listStudentsWithFinancialResponsible` reutilizan estas reglas desde la admisión y la matrícula.
+
+### Novedades de matrícula y estados reales de colegio privado
+
+- La tabla `enrollment_novelties` registra retiro, traslado, cambio de grupo, cambio de sede, reingreso, graduación y cancelación, con motivo estructurado, fechas, referencias documentales y metadata por novedad.
+- `enrollments` ahora persiste `sequenceNumber` (consecutivo), `journey` (jornada), `branchId` (sede explícita), `signedAt` (fecha de firma), `documentStatus`, `financialStatus` y `academicStatus`, además del `enrollmentStatus` ya existente.
+- Al activar una matrícula por primera vez se asigna automáticamente un consecutivo único por año lectivo.
+- El endpoint `/api/enrollments/novelties` permite registrar la novedad y refleja el cambio en `enrollments` (estado, grado o grupo destino) y en el historial auditable.
+- `/api/enrollments/academic-years/:academicYearId/sequence-stats` expone el conteo agregado por tipo de novedad para reportes de cierre anual.
+
 ### Matrícula
 
 - Se puede crear matrícula manual.

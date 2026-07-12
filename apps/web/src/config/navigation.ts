@@ -43,17 +43,26 @@ export const primaryNavigationSections: NavSection[] = [
       { id: 'grades-book', label: 'Notas finales', to: '/grades', shortLabel: 'NO' },
       { id: 'academic-observations', label: 'Observaciones SIEE', to: '/academic-observations', shortLabel: 'OB' },
       { id: 'support-strategies', label: 'Planes de apoyo', to: '/support-strategies', shortLabel: 'PA' },
+      { id: 'committees', label: 'Comités académicos', to: '/committees', shortLabel: 'CM' },
       { id: 'report-cards', label: 'Boletines', to: '/report-cards', shortLabel: 'BO' },
     ],
   },
   {
     id: 'closures',
-    title: 'Cierres y cortes',
+    title: 'Cierres',
     description: 'Control del calendario academico y preparacion de salidas institucionales.',
     items: [
       { id: 'periods', label: 'Periodos', to: '/academic-periods', shortLabel: 'PE' },
       { id: 'years', label: 'Anos lectivos', to: '/academic-years', shortLabel: 'AN' },
-      { id: 'report-cards-closure', label: 'Boletines por corte', to: '/report-cards', shortLabel: 'BC' },
+    ],
+  },
+  {
+    id: 'coexistence-inclusion',
+    title: 'Convivencia e inclusión',
+    description: 'Seguimiento convivencial, apoyos y ajustes razonables.',
+    items: [
+      { id: 'coexistence', label: 'Convivencia escolar', to: '/coexistence', shortLabel: 'CV' },
+      { id: 'piar', label: 'PIAR / Inclusión', to: '/piar', shortLabel: 'PI' },
     ],
   },
   {
@@ -81,8 +90,8 @@ export const primaryNavigationSections: NavSection[] = [
       { id: 'teachers', label: 'Docentes', to: '/teachers', shortLabel: 'DO' },
       { id: 'teacher-assignments', label: 'Carga docente', to: '/teacher-assignments', shortLabel: 'CD' },
       { id: 'teacher-responsibilities', label: 'Directores y coordinacion', to: '/teacher-responsibilities', shortLabel: 'DG' },
-      { id: 'guardians', label: 'Convivencia', to: '/guardians', shortLabel: 'CV' },
       { id: 'users', label: 'Usuarios', to: '/users', shortLabel: 'US' },
+      { id: 'branches', label: 'Sedes', to: '/branches', shortLabel: 'SD' },
       { id: 'announcements', label: 'Comunicaciones', to: '/announcements', shortLabel: 'CM', badge: 3 },
       { id: 'portfolio', label: 'Financiero', to: '/portfolio', shortLabel: 'FI' },
       { id: 'reports', label: 'Reportes', to: '/reports', shortLabel: 'RP' },

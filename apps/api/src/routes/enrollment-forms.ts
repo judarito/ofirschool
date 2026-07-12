@@ -77,8 +77,29 @@ const mapEditorPayload = async (
   tenantId: string,
   tenantSlug: string,
   year: number,
+  gradeId?: string | null,
+  branchId?: string | null,
 ) => {
   const academicYear = await getAcademicYearByNumber(db, tenantId, year)
+
+  const whereConditions = [
+    eq(formTemplates.tenantId, tenantId),
+    eq(formTemplates.academicYearId, academicYear.id),
+    eq(formTemplates.module, 'enrollment'),
+    eq(formTemplates.isDeleted, false),
+  ]
+
+  if (gradeId) {
+    whereConditions.push(eq(formTemplates.gradeId, gradeId))
+  } else {
+    whereConditions.push(eq(formTemplates.gradeId, null as any))
+  }
+
+  if (branchId) {
+    whereConditions.push(eq(formTemplates.branchId, branchId))
+  } else {
+    whereConditions.push(eq(formTemplates.branchId, null as any))
+  }
 
   const [template] = await db
     .select({
@@ -89,16 +110,11 @@ const mapEditorPayload = async (
       endsOn: formTemplates.endsOn,
       activeVersionId: formTemplates.activeVersionId,
       settings: formTemplates.settings,
+      gradeId: formTemplates.gradeId,
+      branchId: formTemplates.branchId,
     })
     .from(formTemplates)
-    .where(
-      and(
-        eq(formTemplates.tenantId, tenantId),
-        eq(formTemplates.academicYearId, academicYear.id),
-        eq(formTemplates.module, 'enrollment'),
-        eq(formTemplates.isDeleted, false),
-      ),
-    )
+    .where(and(...whereConditions))
     .orderBy(desc(formTemplates.createdAt))
     .limit(1)
 
@@ -192,6 +208,7 @@ const mapEditorPayload = async (
       code: requiredDocuments.code,
       name: requiredDocuments.name,
       isRequired: requiredDocuments.isRequired,
+      applicantTypes: requiredDocuments.applicantTypes,
       maxFileSizeMb: requiredDocuments.maxFileSizeMb,
       sortOrder: requiredDocuments.sortOrder,
     })
@@ -234,10 +251,12 @@ const mapEditorPayload = async (
         })),
     })),
     documents: documents.map((document) => ({
-      id: document.code,
+      code: document.code,
       name: document.name,
-      required: document.isRequired,
-      maxSizeMb: document.maxFileSizeMb,
+      isRequired: document.isRequired,
+      applicantTypes: document.applicantTypes || [],
+      maxFileSizeMb: document.maxFileSizeMb,
+      sortOrder: document.sortOrder,
     })),
   }
 }
@@ -246,11 +265,15 @@ const saveVersionGraph = async ({
   db,
   tenantId,
   year,
+  gradeId,
+  branchId,
   payload,
 }: {
   db: AppContextVariables['db']
   tenantId: string
   year: number
+  gradeId?: string | null
+  branchId?: string | null
   payload: {
     name: string
     startsOn: string
@@ -279,23 +302,35 @@ const saveVersionGraph = async ({
 }) => {
   const academicYear = await getAcademicYearByNumber(db, tenantId, year)
 
+  const whereConditions = [
+    eq(formTemplates.tenantId, tenantId),
+    eq(formTemplates.academicYearId, academicYear.id),
+    eq(formTemplates.module, 'enrollment'),
+    eq(formTemplates.isDeleted, false),
+  ]
+
+  if (gradeId) {
+    whereConditions.push(eq(formTemplates.gradeId, gradeId))
+  } else {
+    whereConditions.push(eq(formTemplates.gradeId, null as any))
+  }
+
+  if (branchId) {
+    whereConditions.push(eq(formTemplates.branchId, branchId))
+  } else {
+    whereConditions.push(eq(formTemplates.branchId, null as any))
+  }
+
   const [existingTemplate] = await db
     .select({
       id: formTemplates.id,
       activeVersionId: formTemplates.activeVersionId,
     })
     .from(formTemplates)
-    .where(
-      and(
-        eq(formTemplates.tenantId, tenantId),
-        eq(formTemplates.academicYearId, academicYear.id),
-        eq(formTemplates.module, 'enrollment'),
-        eq(formTemplates.isDeleted, false),
-      ),
-    )
+    .where(and(...whereConditions))
     .limit(1)
 
-  const templateCode = `enrollment-${year}`
+  const templateCode = `enrollment-${year}${gradeId ? `-g${gradeId.slice(0, 8)}` : ''}${branchId ? `-b${branchId.slice(0, 8)}` : ''}`
 
   const template = existingTemplate
     ? (
@@ -325,6 +360,8 @@ const saveVersionGraph = async ({
           .values({
             tenantId,
             academicYearId: academicYear.id,
+            gradeId: gradeId || null,
+            branchId: branchId || null,
             code: templateCode,
             name: payload.name,
             description: `Formulario de inscripción ${year}`,
@@ -447,6 +484,7 @@ const saveVersionGraph = async ({
         code: sanitizeCode(document.id || document.name, `document-${index + 1}`),
         name: document.name,
         isRequired: document.required,
+        applicantTypes: 'applicantTypes' in document ? (document as Record<string, unknown>).applicantTypes as string[] || [] : [],
         maxFileSizeMb: document.maxSizeMb,
         acceptedMimeTypes: ['application/pdf', 'image/jpeg', 'image/png'],
         sortOrder: index + 1,
@@ -492,6 +530,9 @@ enrollmentFormRoutes.get('/:year', requirePermission(PERMISSIONS.ACADEMIC_READ),
   const db = c.get('db')
   const tenantId = c.get('tenantId')
   const year = Number(c.req.param('year'))
+  const gradeId = c.req.query('gradeId') || null
+  const branchId = c.req.query('branchId') || null
+
 
   if (!Number.isInteger(year)) {
     throw new AppError('Año lectivo invalido', 400)
@@ -509,11 +550,13 @@ enrollmentFormRoutes.get('/:year', requirePermission(PERMISSIONS.ACADEMIC_READ),
     throw new AppError('Tenant no encontrado', 404)
   }
 
-  const data = await mapEditorPayload(db, tenantId, tenant.slug, year)
+  const data = await mapEditorPayload(db, tenantId, tenant.slug, year, gradeId, branchId)
 
   return c.json(
     ok('Configuración del formulario cargada', {
       year,
+      gradeId,
+      branchId,
       tenantSlug: tenant.slug,
       templateId: data.template?.id ?? null,
       versionId: data.version?.id ?? null,
@@ -559,6 +602,8 @@ enrollmentFormRoutes.put('/:year', requirePermission(PERMISSIONS.ACADEMIC_WRITE)
     db,
     tenantId,
     year,
+    gradeId: payload.gradeId,
+    branchId: payload.branchId,
     payload,
   })
 
@@ -570,6 +615,8 @@ enrollmentFormRoutes.put('/:year', requirePermission(PERMISSIONS.ACADEMIC_WRITE)
     action: 'save_draft',
     changes: {
       year,
+      gradeId: payload.gradeId,
+      branchId: payload.branchId,
       versionId: saved.versionId,
       sections: payload.sections.length,
       documents: payload.documents.length,
@@ -577,7 +624,7 @@ enrollmentFormRoutes.put('/:year', requirePermission(PERMISSIONS.ACADEMIC_WRITE)
     ipAddress: c.req.header('cf-connecting-ip'),
   })
 
-  const data = await mapEditorPayload(db, tenantId, tenant.slug, year)
+  const data = await mapEditorPayload(db, tenantId, tenant.slug, year, payload.gradeId, payload.branchId)
 
   return c.json(
     ok('Borrador guardado', {
@@ -634,6 +681,8 @@ enrollmentFormRoutes.post('/:year/publish', requirePermission(PERMISSIONS.ACADEM
     db,
     tenantId,
     year,
+    gradeId: payload.gradeId,
+    branchId: payload.branchId,
     payload,
   })
 
@@ -693,17 +742,21 @@ enrollmentFormRoutes.post('/:year/publish', requirePermission(PERMISSIONS.ACADEM
     action: 'publish',
     changes: {
       year,
+      gradeId: payload.gradeId,
+      branchId: payload.branchId,
       versionId: saved.versionId,
       versionNumber: saved.versionNumber,
     },
     ipAddress: c.req.header('cf-connecting-ip'),
   })
 
-  const data = await mapEditorPayload(db, tenantId, tenant.slug, year)
+  const data = await mapEditorPayload(db, tenantId, tenant.slug, year, payload.gradeId, payload.branchId)
 
   return c.json(
     ok('Formulario publicado', {
       year,
+      gradeId: payload.gradeId,
+      branchId: payload.branchId,
       tenantSlug: tenant.slug,
       templateId: data.template?.id ?? null,
       versionId: data.version?.id ?? null,

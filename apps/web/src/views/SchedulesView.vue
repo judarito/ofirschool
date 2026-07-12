@@ -509,61 +509,34 @@ import PageHeader from '../components/PageHeader.vue'
 import SurfaceCard from '../components/SurfaceCard.vue'
 import { api } from '../lib/api'
 import { useAcademicContextStore } from '../stores/academic-context'
-
-type TabId = 'journeys' | 'slots' | 'groups' | 'generate'
-type Row = { id: string } & Record<string, unknown>
+import {
+  buildPrimaryGuide,
+  defaultEntryForm,
+  defaultGenerationForm,
+  defaultGroupOptionForm,
+  defaultJourneyForm,
+  defaultSlotForm,
+  groupOptionColumns,
+  journeyColumns,
+  journeyOptionLabel,
+  journeyScopeBadge,
+  journeyScopeLabel,
+  journeyScopeType,
+  normalizeText,
+  scopeBadgeClass,
+  slotColumns,
+  slotDayLabel,
+  slotTypeBadge,
+  tabs,
+  timetableColumns,
+  toPaginatedRows,
+  translateSlotType,
+  weekdays,
+  type Row,
+  type TabId,
+} from './schedules/schedulesConfig'
 
 const academicContext = useAcademicContextStore()
-
-const weekdays = [
-  { value: 'monday', label: 'Lunes' },
-  { value: 'tuesday', label: 'Martes' },
-  { value: 'wednesday', label: 'Miércoles' },
-  { value: 'thursday', label: 'Jueves' },
-  { value: 'friday', label: 'Viernes' },
-  { value: 'saturday', label: 'Sábado' },
-]
-
-const tabs = [
-  { id: 'journeys' as TabId, label: '1. Jornadas', helper: 'Mañana, tarde, única y similares.' },
-  { id: 'slots' as TabId, label: '2. Franjas', helper: 'Bloques por día dentro de cada jornada.' },
-  { id: 'groups' as TabId, label: '3. Cursos', helper: 'Jornadas posibles por curso.' },
-  { id: 'generate' as TabId, label: '4. Generar', helper: 'Borrador y conflictos del horario.' },
-]
-
-const journeyColumns = [
-  { key: 'academicYearName', label: 'Año lectivo' },
-  { key: 'name', label: 'Jornada' },
-  { key: 'scopeLabel', label: 'Aplica a' },
-  { key: 'code', label: 'Código' },
-  { key: 'window', label: 'Horario base' },
-  { key: 'isActive', label: 'Estado' },
-]
-
-const slotColumns = [
-  { key: 'journeyName', label: 'Jornada' },
-  { key: 'dayLabel', label: 'Día' },
-  { key: 'slotOrder', label: 'Bloque' },
-  { key: 'window', label: 'Hora' },
-  { key: 'slotType', label: 'Tipo' },
-]
-
-const groupOptionColumns = [
-  { key: 'groupLabel', label: 'Curso' },
-  { key: 'journeyLabel', label: 'Jornada' },
-  { key: 'priority', label: 'Prioridad' },
-  { key: 'isPreferred', label: 'Preferida' },
-]
-
-const timetableColumns = [
-  { key: 'groupLabel', label: 'Curso' },
-  { key: 'dayLabel', label: 'Día' },
-  { key: 'slotOrder', label: 'Bloque' },
-  { key: 'window', label: 'Hora' },
-  { key: 'subjectName', label: 'Materia' },
-  { key: 'teacherName', label: 'Docente' },
-  { key: 'status', label: 'Estado' },
-]
 
 const activeTab = ref<TabId>('journeys')
 const activeModal = ref<'' | 'journey' | 'slot' | 'group-option' | 'generate' | 'entry'>('')
@@ -611,47 +584,11 @@ const isSavingEntry = ref(false)
 const isGenerating = ref(false)
 const isUpdatingStatus = ref(false)
 
-const journeyForm = reactive({
-  academicYearId: '',
-  branchId: '',
-  targetLevelName: '',
-  targetGradeId: '',
-  name: '',
-  code: '',
-  startsAt: '06:30',
-  endsAt: '12:30',
-  isActive: true,
-})
-
-const slotForm = reactive({
-  journeyId: '',
-  dayOfWeek: 'monday',
-  slotOrder: 1,
-  startsAt: '06:30',
-  endsAt: '07:20',
-  slotType: 'class',
-  label: '',
-})
-
-const groupOptionForm = reactive({
-  academicYearId: '',
-  groupId: '',
-  journeyId: '',
-  priority: 0,
-  isPreferred: false,
-})
-
-const generationForm = reactive({
-  academicYearId: '',
-  groupId: '',
-  overwriteExisting: true,
-})
-
-const entryForm = reactive({
-  journeyId: '',
-  journeySlotId: '',
-  notes: '',
-})
+const journeyForm = reactive(defaultJourneyForm())
+const slotForm = reactive(defaultSlotForm())
+const groupOptionForm = reactive(defaultGroupOptionForm())
+const generationForm = reactive(defaultGenerationForm())
+const entryForm = reactive(defaultEntryForm())
 
 const resolvedAcademicYearId = computed(() =>
   filters.academicYearId || academicContext.activeYearId || academicYears.value[0]?.id || '',
@@ -771,58 +708,15 @@ const scheduleSummary = computed(() => ({
   timetableEntries: timetableCache.value.length,
 }))
 
-const primaryGuide = computed(() => {
-  if (!journeyCache.value.length) {
-    return {
-      status: 'Base vacía',
-      description: 'Antes de pensar en generación, primero debemos crear al menos una jornada para el año lectivo.',
-      actionLabel: 'Crear primera jornada',
-      secondaryTab: 'journeys' as TabId,
-      secondaryLabel: 'jornadas',
-      items: [
-        { label: 'Jornadas configuradas', value: '0', helper: 'Sin jornada no existe una plantilla horaria sobre la cual repartir materias.' },
-      ],
-    }
-  }
-
-  if (!slotCache.value.length) {
-    return {
-      status: 'Faltan franjas',
-      description: 'Ya hay jornadas, pero aún no hay bloques reales para que el generador reparta la intensidad horaria.',
-      actionLabel: 'Crear franjas',
-      secondaryTab: 'slots' as TabId,
-      secondaryLabel: 'franjas',
-      items: [
-        { label: 'Jornada seleccionada', value: selectedJourneyLabel.value, helper: 'Elige una jornada y define bloques tipo clase, descanso o institucionales.' },
-      ],
-    }
-  }
-
-  if (scheduleSummary.value.configuredGroups < coursesForYear.value.length) {
-    return {
-      status: 'Faltan cursos',
-      description: 'La base temporal está lista, pero todavía faltan cursos por asociar a una o más jornadas candidatas.',
-      actionLabel: 'Asignar jornadas a cursos',
-      secondaryTab: 'groups' as TabId,
-      secondaryLabel: 'cursos',
-      items: [
-        { label: 'Cursos con opción', value: String(scheduleSummary.value.configuredGroups), helper: `Hay ${coursesForYear.value.length} cursos en el año seleccionado.` },
-      ],
-    }
-  }
-
-  return {
-    status: 'Listo para generar',
-    description: 'La base mínima ya existe. El siguiente paso es generar el borrador y revisar conflictos de docentes o bloques.',
-    actionLabel: 'Generar borrador',
-    secondaryTab: 'generate' as TabId,
-    secondaryLabel: 'revisión',
-    items: [
-      { label: 'Bloques listos', value: String(scheduleSummary.value.slots), helper: 'Se usarán solo las franjas de tipo clase para construir el horario.' },
-      { label: 'Cursos configurados', value: String(scheduleSummary.value.configuredGroups), helper: 'Cada curso tomará su jornada preferida o la de menor prioridad disponible.' },
-    ],
-  }
-})
+const primaryGuide = computed(() =>
+  buildPrimaryGuide({
+    hasJourneys: Boolean(journeyCache.value.length),
+    hasSlots: Boolean(slotCache.value.length),
+    scheduleSummary: scheduleSummary.value,
+    coursesForYearCount: coursesForYear.value.length,
+    selectedJourneyLabel: selectedJourneyLabel.value,
+  }),
+)
 
 const loadBaseOptions = async () => {
   const [yearsResponse, gradesResponse, coursesResponse, teachersResponse] = await Promise.all([
@@ -874,40 +768,6 @@ const refreshJourneyOptions = async () => {
     selectedJourneyId.value = journeyOptions.value[0]?.id || ''
   }
 }
-
-const toPaginatedRows = <T extends Row>(items: T[], page: number, pageSize: number) => {
-  const start = (page - 1) * pageSize
-  return {
-    items: items.slice(start, start + pageSize),
-    total: items.length,
-    page,
-    pageSize,
-  }
-}
-
-const normalizeText = (value: unknown) => String(value ?? '').toLowerCase()
-const translateLevelName = (levelName: string | null | undefined) => {
-  switch (levelName) {
-    case 'preschool':
-      return 'Preescolar'
-    case 'primary':
-      return 'Primaria'
-    case 'secondary':
-      return 'Secundaria'
-    case 'middle':
-      return 'Media / bachillerato'
-    default:
-      return ''
-  }
-}
-const journeyScopeLabel = (journey: Pick<AcademicYearJourneyDto, 'targetGradeName' | 'targetLevelName'>) =>
-  journey.targetGradeName || translateLevelName(journey.targetLevelName) || 'Todo el colegio'
-const journeyScopeType = (journey: Pick<AcademicYearJourneyDto, 'targetGradeName' | 'targetLevelName'>) =>
-  journey.targetGradeName ? 'grade' : journey.targetLevelName ? 'level' : 'global'
-const journeyScopeBadge = (journey: Pick<AcademicYearJourneyDto, 'targetGradeName' | 'targetLevelName'>) =>
-  journey.targetGradeName ? 'Grado' : journey.targetLevelName ? 'Nivel' : 'Global'
-const journeyOptionLabel = (journey: Pick<AcademicYearJourneyDto, 'name' | 'code' | 'targetGradeName' | 'targetLevelName'>) =>
-  `${journey.name} · ${journey.code} · ${journeyScopeLabel(journey)}`
 
 const fetchJourneys = async ({ page, pageSize, query }: { page: number; pageSize: number; query: string }) => {
   const response = await api.getJourneys({ academicYearId: filters.academicYearId })
@@ -1018,42 +878,6 @@ const reloadTimetable = async () => {
 
 const closeModal = () => {
   activeModal.value = ''
-}
-
-const slotTypeBadge = (slotType: string) => {
-  if (slotType === 'class') return 'meta-badge--success'
-  if (slotType === 'break' || slotType === 'lunch') return 'meta-badge--warning'
-  return 'meta-badge--info'
-}
-
-const scopeBadgeClass = (scopeType: string) => {
-  switch (scopeType) {
-    case 'grade':
-      return 'meta-badge--warning'
-    case 'level':
-      return 'meta-badge--info'
-    default:
-      return 'meta-badge--success'
-  }
-}
-
-const slotDayLabel = (dayOfWeek: string) => weekdays.find((day) => day.value === dayOfWeek)?.label ?? dayOfWeek
-
-const translateSlotType = (slotType: string) => {
-  switch (slotType) {
-    case 'class':
-      return 'Clase'
-    case 'break':
-      return 'Descanso'
-    case 'homeroom':
-      return 'Dir. grupo'
-    case 'lunch':
-      return 'Almuerzo'
-    case 'institutional':
-      return 'Institucional'
-    default:
-      return slotType
-  }
 }
 
 const handlePrimaryGuideAction = () => {
@@ -1419,272 +1243,4 @@ onMounted(async () => {
 })
 </script>
 
-<style scoped>
-.module-inline-summary,
-.schedule-generation-card {
-  display: grid;
-  gap: 1rem;
-}
-
-.schedule-scheduler-card {
-  display: grid;
-  gap: 1rem;
-}
-
-.module-inline-summary {
-  grid-template-columns: minmax(0, 1.7fr) auto auto;
-  align-items: center;
-}
-
-.module-inline-summary__copy {
-  display: grid;
-  gap: 0.3rem;
-}
-
-.module-inline-summary__copy p,
-.module-inline-summary__meta small {
-  color: var(--text-muted);
-}
-
-.module-inline-summary__meta {
-  display: grid;
-  gap: 0.2rem;
-  justify-items: end;
-  text-align: right;
-}
-
-.module-inline-summary__meta span {
-  font-weight: 700;
-}
-
-.module-inline-summary__actions {
-  display: flex;
-  gap: 0.65rem;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-}
-
-.schedule-tabs {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 0.75rem;
-}
-
-.schedule-tab {
-  border: 1px solid var(--border-color);
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.86);
-  padding: 0.9rem 1rem;
-  text-align: left;
-  display: grid;
-  gap: 0.35rem;
-  transition: border-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
-}
-
-.schedule-tab strong {
-  font-size: 0.95rem;
-}
-
-.schedule-tab span {
-  font-size: 0.82rem;
-  color: var(--text-muted);
-}
-
-.schedule-tab:hover {
-  transform: translateY(-1px);
-  border-color: rgba(31, 70, 144, 0.35);
-}
-
-.schedule-tab--active {
-  border-color: rgba(31, 70, 144, 0.5);
-  box-shadow: 0 16px 32px rgba(31, 70, 144, 0.12);
-  background: linear-gradient(135deg, rgba(235, 244, 255, 0.95), rgba(255, 255, 255, 0.95));
-}
-
-.schedule-metrics {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 0.85rem;
-}
-
-.schedule-metric {
-  border: 1px solid rgba(15, 23, 42, 0.08);
-  border-radius: 16px;
-  padding: 0.9rem;
-  display: grid;
-  gap: 0.25rem;
-  background: rgba(248, 250, 252, 0.9);
-}
-
-.schedule-metric span,
-.schedule-metric small {
-  color: var(--text-muted);
-}
-
-.schedule-metric strong {
-  font-size: 1.45rem;
-}
-
-.schedule-conflicts {
-  display: grid;
-  gap: 0.65rem;
-}
-
-.schedule-generation-summary {
-  display: flex;
-  gap: 0.85rem;
-  flex-wrap: wrap;
-  color: var(--text-muted);
-  font-size: 0.92rem;
-}
-
-.schedule-scheduler-empty {
-  border: 1px dashed var(--border-color);
-  border-radius: 18px;
-  padding: 1rem 1.1rem;
-  background: color-mix(in srgb, var(--surface-2, #f8fafc) 92%, white);
-}
-
-.schedule-scheduler-empty p {
-  color: var(--text-muted);
-  margin: 0.35rem 0 0;
-}
-
-.schedule-scheduler {
-  display: grid;
-  grid-template-columns: 150px repeat(var(--scheduler-days, 5), minmax(180px, 1fr));
-  gap: 0.65rem;
-  align-items: stretch;
-  overflow-x: auto;
-}
-
-.schedule-scheduler__corner,
-.schedule-scheduler__day,
-.schedule-scheduler__time,
-.schedule-scheduler__cell {
-  border: 1px solid var(--border-color);
-  border-radius: 16px;
-  background: var(--surface-color);
-  min-height: 90px;
-  padding: 0.85rem;
-}
-
-.schedule-scheduler__corner,
-.schedule-scheduler__day {
-  min-height: auto;
-  font-weight: 700;
-  background: color-mix(in srgb, var(--surface-2, #f8fafc) 92%, white);
-}
-
-.schedule-scheduler__time {
-  display: grid;
-  gap: 0.2rem;
-}
-
-.schedule-scheduler__time small {
-  color: var(--text-muted);
-}
-
-.schedule-scheduler__cell {
-  display: grid;
-  gap: 0.55rem;
-  align-content: start;
-}
-
-.schedule-scheduler-entry {
-  display: grid;
-  gap: 0.35rem;
-  padding: 0.75rem;
-  border-radius: 14px;
-  background: color-mix(in srgb, var(--brand-primary-soft) 55%, white);
-  border: 1px solid color-mix(in srgb, var(--brand-primary) 16%, var(--border-color));
-}
-
-.schedule-scheduler-entry--draft {
-  background: rgba(255, 247, 237, 0.95);
-  border-color: rgba(245, 158, 11, 0.26);
-}
-
-.schedule-scheduler-entry--published {
-  background: rgba(239, 246, 255, 0.95);
-  border-color: rgba(59, 130, 246, 0.24);
-}
-
-.schedule-scheduler-entry--locked {
-  background: rgba(241, 245, 249, 0.96);
-  border-color: rgba(100, 116, 139, 0.24);
-}
-
-.schedule-scheduler-entry__header {
-  display: flex;
-  justify-content: space-between;
-  gap: 0.75rem;
-  align-items: baseline;
-}
-
-.schedule-scheduler-entry__header span,
-.schedule-scheduler-entry p,
-.schedule-scheduler-entry small {
-  color: var(--text-muted);
-}
-
-.schedule-scheduler-entry p,
-.schedule-scheduler-entry small {
-  margin: 0;
-}
-
-.schedule-conflict {
-  border-left: 4px solid rgba(198, 73, 73, 0.65);
-  background: rgba(255, 245, 245, 0.92);
-  border-radius: 14px;
-  padding: 0.85rem 0.95rem;
-  color: #7f1d1d;
-  font-size: 0.92rem;
-}
-
-.schedule-scope-cell {
-  display: grid;
-  gap: 0.3rem;
-}
-
-.schedule-scope-cell small {
-  color: var(--text-muted);
-  font-size: 0.78rem;
-}
-
-.form-grid--compact {
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-}
-
-.checkbox-field {
-  display: flex;
-  align-items: center;
-  gap: 0.65rem;
-  min-height: 100%;
-}
-
-.checkbox-field input {
-  width: auto;
-}
-
-.checkbox-field--full {
-  grid-column: 1 / -1;
-}
-
-@media (max-width: 768px) {
-  .module-inline-summary,
-  .schedule-tabs,
-  .schedule-metrics {
-    grid-template-columns: 1fr;
-  }
-
-  .schedule-scheduler {
-    grid-template-columns: 120px repeat(var(--scheduler-days, 5), minmax(160px, 1fr));
-  }
-
-  .module-inline-summary__meta {
-    justify-items: start;
-    text-align: left;
-  }
-}
-</style>
+<style src="./schedules/SchedulesView.css" scoped></style>

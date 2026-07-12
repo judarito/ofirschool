@@ -119,7 +119,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
-import type { AcademicPeriodDto, AcademicYearDto, AppliedGradingScaleDto, CourseDto, GradeSubjectDto, GradebookEntryDto } from '@ofir/shared'
+import type { AcademicPeriodDto, AcademicYearDto, AppliedGradingScaleDto, CourseDto, CourseSubjectDto, GradeSubjectDto, GradebookEntryDto } from '@ofir/shared'
 import PageHeader from '../components/PageHeader.vue'
 import SurfaceCard from '../components/SurfaceCard.vue'
 import { api } from '../lib/api'
@@ -132,6 +132,7 @@ const academicYears = ref<AcademicYearDto[]>([])
 const periods = ref<AcademicPeriodDto[]>([])
 const courses = ref<CourseDto[]>([])
 const gradeSubjects = ref<GradeSubjectDto[]>([])
+const courseSubjects = ref<CourseSubjectDto[]>([])
 const entries = ref<GradebookEntryDto[]>([])
 const resolvedScale = ref<AppliedGradingScaleDto | null>(null)
 const filters = reactive({
@@ -144,10 +145,16 @@ const filters = reactive({
 const filteredPeriods = computed(() => periods.value.filter((period) => period.academicYearId === filters.academicYearId))
 const filteredCourses = computed(() => courses.value.filter((course) => course.academicYearId === filters.academicYearId))
 const availableSubjects = computed(() => {
-  const matches = gradeSubjects.value.filter((item) =>
+  const assignedMatches = courseSubjects.value.filter((item) =>
     item.academicYearId === filters.academicYearId &&
-    (!filters.groupId || filteredCourses.value.find((course) => course.id === filters.groupId)?.gradeId === item.gradeId),
+    (!filters.groupId || item.groupId === filters.groupId),
   )
+  const matches = assignedMatches.length
+    ? assignedMatches.map((item) => ({ subjectId: item.subjectId, subjectName: item.subjectName || 'Materia sin nombre' }))
+    : gradeSubjects.value.filter((item) =>
+      item.academicYearId === filters.academicYearId &&
+      (!filters.groupId || filteredCourses.value.find((course) => course.id === filters.groupId)?.gradeId === item.gradeId),
+    )
   const seen = new Set<string>()
   return matches.filter((item) => {
     if (seen.has(item.subjectId)) return false
@@ -216,16 +223,18 @@ const invalidEntriesCount = computed(() =>
 )
 
 const loadOptions = async () => {
-  const [yearsResponse, periodsResponse, coursesResponse, assignmentsResponse] = await Promise.all([
+  const [yearsResponse, periodsResponse, coursesResponse, assignmentsResponse, courseSubjectsResponse] = await Promise.all([
     api.getAcademicYears({ page: 1, pageSize: 100 }),
     api.getAcademicPeriods({ page: 1, pageSize: 100 }),
     api.getCourses({ page: 1, pageSize: 100 }),
     api.getGradeSubjects({ page: 1, pageSize: 100 }),
+    api.getCourseSubjects({}),
   ])
   academicYears.value = yearsResponse.data.items
   periods.value = periodsResponse.data.items
   courses.value = coursesResponse.data.items
   gradeSubjects.value = assignmentsResponse.data.items
+  courseSubjects.value = courseSubjectsResponse.data.items
   filters.academicYearId ||= academicContext.activeYearId || academicYears.value[0]?.id || ''
 }
 

@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, ilike, or, sql } from 'drizzle-orm'
+import { and, asc, count, desc, eq, ilike, ne, or, sql } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import {
@@ -149,37 +149,68 @@ studentRoutes.post('/', requirePermission(PERMISSIONS.STUDENTS_WRITE), zValidato
   const payload = c.req.valid('json')
   const user = c.get('user')
 
-  const [student] = await db
-    .insert(students)
-    .values({
-      tenantId,
-      firstName: payload.firstName,
-      middleName: payload.middleName || null,
-      lastName: payload.lastName,
-      documentType: payload.documentType,
-      documentNumber: payload.documentNumber,
-      birthDate: payload.birthDate || null,
-      gender: payload.gender,
-      bloodType: payload.bloodType || null,
-      status: payload.status,
-      createdBy: user.id,
-      updatedBy: user.id,
-    })
-    .returning()
+  const [duplicate] = await db
+    .select({ id: students.id })
+    .from(students)
+    .where(
+      and(
+        eq(students.tenantId, tenantId),
+        eq(students.documentType, payload.documentType),
+        eq(students.documentNumber, payload.documentNumber),
+        eq(students.isDeleted, false),
+      ),
+    )
+    .limit(1)
+
+  if (duplicate) {
+    throw new AppError('Ya existe un estudiante con este tipo y número de documento', 409)
+  }
+
+  let student: { id: string } | undefined
+  try {
+    ;[student] = await db
+      .insert(students)
+      .values({
+        tenantId,
+        firstName: payload.firstName,
+        middleName: payload.middleName || null,
+        lastName: payload.lastName,
+        documentType: payload.documentType,
+        documentNumber: payload.documentNumber,
+        birthDate: payload.birthDate || null,
+        gender: payload.gender,
+        bloodType: payload.bloodType || null,
+        status: payload.status,
+        emergencyContacts: [],
+        pickupAuthorized: [],
+        sensitiveDataAccess: {},
+        createdBy: user.id,
+        updatedBy: user.id,
+      })
+      .returning({ id: students.id })
+  } catch (error) {
+    console.error('Error creating student', error)
+    const errorMessage = error instanceof Error ? error.message : String(error)
+    throw new AppError(`No fue posible crear el estudiante: ${errorMessage}`, 500)
+  }
 
   if (!student) {
     throw new AppError('No fue posible crear el estudiante', 500)
   }
 
-  await writeAuditLog(db, {
-    tenantId,
-    actorUserId: user.id,
-    entity: 'students',
-    entityId: student.id,
-    action: 'create',
-    changes: payload,
-    ipAddress: c.req.header('cf-connecting-ip'),
-  })
+  try {
+    await writeAuditLog(db, {
+      tenantId,
+      actorUserId: user.id,
+      entity: 'students',
+      entityId: student.id,
+      action: 'create',
+      changes: payload,
+      ipAddress: c.req.header('cf-connecting-ip'),
+    })
+  } catch (error) {
+    console.error('Error writing student create audit log', error)
+  }
 
   return c.json(
     created('Estudiante creado', {
@@ -435,37 +466,95 @@ studentRoutes.put('/:id', requirePermission(PERMISSIONS.STUDENTS_WRITE), zValida
   const user = c.get('user')
   const id = c.req.param('id')
 
-  const [student] = await db
-    .update(students)
-    .set({
-      firstName: payload.firstName,
-      middleName: payload.middleName || null,
-      lastName: payload.lastName,
-      documentType: payload.documentType,
-      documentNumber: payload.documentNumber,
-      birthDate: payload.birthDate || null,
-      gender: payload.gender,
-      bloodType: payload.bloodType || null,
-      status: payload.status,
-      updatedBy: user.id,
-      updatedAt: new Date(),
-    })
-    .where(and(eq(students.id, id), eq(students.tenantId, tenantId), eq(students.isDeleted, false)))
-    .returning()
+  const [duplicate] = await db
+    .select({ id: students.id })
+    .from(students)
+    .where(
+      and(
+        eq(students.tenantId, tenantId),
+        eq(students.documentType, payload.documentType),
+        eq(students.documentNumber, payload.documentNumber),
+        eq(students.isDeleted, false),
+        ne(students.id, id),
+      ),
+    )
+    .limit(1)
+
+  if (duplicate) {
+    throw new AppError('Ya existe otro estudiante con este tipo y número de documento', 409)
+  }
+
+  let student:
+    | {
+        id: string
+        tenantId: string
+        firstName: string
+        middleName: string | null
+        lastName: string
+        documentType: string
+        documentNumber: string
+        birthDate: string | null
+        gender: string | null
+        bloodType: string | null
+        status: string
+        createdAt: Date
+        updatedAt: Date
+      }
+    | undefined
+  try {
+    ;[student] = await db
+      .update(students)
+      .set({
+        firstName: payload.firstName,
+        middleName: payload.middleName || null,
+        lastName: payload.lastName,
+        documentType: payload.documentType,
+        documentNumber: payload.documentNumber,
+        birthDate: payload.birthDate || null,
+        gender: payload.gender,
+        bloodType: payload.bloodType || null,
+        status: payload.status,
+        updatedBy: user.id,
+        updatedAt: new Date(),
+      })
+      .where(and(eq(students.id, id), eq(students.tenantId, tenantId), eq(students.isDeleted, false)))
+      .returning({
+        id: students.id,
+        tenantId: students.tenantId,
+        firstName: students.firstName,
+        middleName: students.middleName,
+        lastName: students.lastName,
+        documentType: students.documentType,
+        documentNumber: students.documentNumber,
+        birthDate: students.birthDate,
+        gender: students.gender,
+        bloodType: students.bloodType,
+        status: students.status,
+        createdAt: students.createdAt,
+        updatedAt: students.updatedAt,
+      })
+  } catch (error) {
+    console.error('Error updating student', error)
+    throw new AppError('No fue posible actualizar el estudiante. Revisa los datos obligatorios e intenta nuevamente.', 500)
+  }
 
   if (!student) {
     throw new AppError('Estudiante no encontrado', 404)
   }
 
-  await writeAuditLog(db, {
-    tenantId,
-    actorUserId: user.id,
-    entity: 'students',
-    entityId: id,
-    action: 'update',
-    changes: payload,
-    ipAddress: c.req.header('cf-connecting-ip'),
-  })
+  try {
+    await writeAuditLog(db, {
+      tenantId,
+      actorUserId: user.id,
+      entity: 'students',
+      entityId: id,
+      action: 'update',
+      changes: payload,
+      ipAddress: c.req.header('cf-connecting-ip'),
+    })
+  } catch (error) {
+    console.error('Error writing student update audit log', error)
+  }
 
   return c.json(ok('Estudiante actualizado', student))
 })

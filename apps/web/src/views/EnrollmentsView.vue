@@ -107,12 +107,18 @@
       <form class="form-grid" @submit.prevent="createEnrollment">
         <label>
           Estudiante
-          <select v-model="newEnrollment.studentId">
+          <select v-model="newEnrollment.studentId" :disabled="busy || !enrollmentCandidates.length">
+            <option value="">
+              {{ enrollmentCandidates.length ? 'Selecciona un estudiante' : 'No hay estudiantes disponibles para matricular' }}
+            </option>
             <option v-for="candidate in enrollmentCandidates" :key="candidate.studentId" :value="candidate.studentId">
               {{ candidate.studentName }} · {{ candidate.studentDocument }}
             </option>
           </select>
         </label>
+        <p v-if="!enrollmentCandidates.length" class="form-note form-grid__wide">
+          No encontramos estudiantes elegibles para el año lectivo activo. Revisa que existan estudiantes sin matrícula en este año o cambia el año lectivo en la barra superior.
+        </p>
         <label>
           Año lectivo activo
           <input :value="academicContext.activeYearName" disabled />
@@ -167,7 +173,7 @@
         </label>
         <div class="modal-actions">
           <button class="button button--ghost" type="button" @click="closeModal">Cancelar</button>
-          <button class="button button--brand" type="submit" :disabled="busy">{{ busy ? 'Guardando...' : 'Guardar matrícula' }}</button>
+          <button class="button button--brand" type="submit" :disabled="busy || !canCreateEnrollment">{{ busy ? 'Guardando...' : 'Guardar matrícula' }}</button>
         </div>
       </form>
     </FormModal>
@@ -433,6 +439,7 @@ import PageHeader from '../components/PageHeader.vue'
 import StatusBadge from '../components/StatusBadge.vue'
 import SurfaceCard from '../components/SurfaceCard.vue'
 import { useAcademicContextStore } from '../stores/academic-context'
+import { columns, formatDate, formatNumeric, originLabel, promotionDecisionLabel, statusLabel } from './enrollments/enrollmentsConfig'
 
 const activeModal = ref<'create' | 'continuity' | 'annual-close' | null>(null)
 const busy = ref(false)
@@ -456,16 +463,6 @@ const filters = reactive({
   gradeId: '',
   groupId: '',
 })
-const columns = [
-  { key: 'studentName', label: 'Estudiante' },
-  { key: 'academicYearName', label: 'Año lectivo' },
-  { key: 'gradeName', label: 'Grado' },
-  { key: 'groupName', label: 'Curso' },
-  { key: 'enrollmentType', label: 'Origen' },
-  { key: 'enrollmentDate', label: 'Fecha matrícula' },
-  { key: 'enrollmentStatus', label: 'Estado' },
-]
-
 const newEnrollment = reactive({
   studentId: '',
   academicYearId: '',
@@ -505,6 +502,9 @@ const filteredCourseOptions = computed(() =>
 
 const selectedCandidate = computed(
   () => enrollmentCandidates.value.find((candidate) => candidate.studentId === newEnrollment.studentId) ?? null,
+)
+const canCreateEnrollment = computed(() =>
+  Boolean(newEnrollment.studentId && newEnrollment.academicYearId && newEnrollment.gradeId && newEnrollment.enrollmentDate),
 )
 const continuityPendingCount = computed(() => continuityPreview.value?.eligibleCandidates ?? 0)
 const continuityTitle = computed(() => {
@@ -605,32 +605,6 @@ const primaryWorkflow = computed(() => {
     status: 'aprobado',
   }
 })
-const originLabel = (value: string) => {
-  if (value === 'new') return 'Inscripción aceptada'
-  if (value === 'renewal') return 'Renovación'
-  if (value === 'promotion') return 'Promoción'
-  if (value === 'auto_promotion') return 'Promoción automática'
-  if (value === 'transfer') return 'Traslado'
-  return value
-}
-
-const statusLabel = (value: string) => {
-  if (value === 'active') return 'activa'
-  if (value === 'pending') return 'pendiente'
-  if (value === 'draft') return 'revision'
-  if (value === 'cancelled') return 'cancelada'
-  return value
-}
-
-const formatDate = (value: string) => new Date(value).toLocaleDateString('es-CO')
-const formatNumeric = (value: number) => value.toFixed(2)
-const promotionDecisionLabel = (value: string) => {
-  if (value === 'promoted') return 'promovido'
-  if (value === 'conditional') return 'condicional'
-  if (value === 'not_promoted') return 'no_promovido'
-  return 'pendiente'
-}
-
 const resetForm = () => {
   newEnrollment.studentId = enrollmentCandidates.value[0]?.studentId ?? ''
   newEnrollment.academicYearId = academicContext.activeYearId
@@ -743,10 +717,18 @@ const closeModal = () => {
   activeModal.value = null
 }
 
-const openCreate = () => {
+const openCreate = async () => {
   viewMode.value = 'create'
-  resetForm()
-  activeModal.value = 'create'
+  busy.value = true
+  try {
+    await loadCatalogs()
+    resetForm()
+    activeModal.value = 'create'
+  } catch (caught) {
+    feedback.value = caught instanceof Error ? caught.message : 'No pudimos cargar los estudiantes disponibles para matrícula.'
+  } finally {
+    busy.value = false
+  }
 }
 
 const openContinuity = async () => {
@@ -780,10 +762,15 @@ const runPrimaryWorkflowAction = () => {
     void openAnnualClosure()
     return
   }
-  openCreate()
+  void openCreate()
 }
 
 const createEnrollment = async () => {
+  if (!canCreateEnrollment.value) {
+    feedback.value = 'Selecciona estudiante, año lectivo y grado antes de guardar la matrícula.'
+    return
+  }
+
   busy.value = true
   try {
     await api.createEnrollment({
@@ -945,92 +932,4 @@ onMounted(async () => {
 })
 </script>
 
-<style scoped>
-.module-inline-summary {
-  display: grid;
-  grid-template-columns: minmax(0, 1.7fr) auto auto;
-  gap: 1rem;
-  align-items: center;
-}
-
-.module-inline-summary__copy {
-  display: grid;
-  gap: 0.3rem;
-}
-
-.module-inline-summary__copy p,
-.module-inline-summary__meta small {
-  color: var(--text-muted);
-}
-
-.module-inline-summary__meta {
-  display: grid;
-  gap: 0.2rem;
-  justify-items: end;
-  text-align: right;
-}
-
-.module-inline-summary__meta span {
-  font-weight: 700;
-}
-
-.module-inline-summary__actions {
-  display: flex;
-  gap: 0.65rem;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-}
-
-.enrollments-toolbar {
-  display: flex;
-  justify-content: space-between;
-  gap: 0.75rem;
-  flex-wrap: wrap;
-  width: 100%;
-}
-
-.enrollments-toolbar__actions {
-  display: flex;
-  gap: 0.65rem;
-  flex-wrap: wrap;
-}
-
-.enrollments-view-tabs {
-  display: flex;
-  gap: 0.55rem;
-  flex-wrap: wrap;
-}
-
-.enrollments-view-tabs .chip-button--active {
-  background: var(--brand-primary-soft);
-  border-color: color-mix(in srgb, var(--brand-primary) 28%, var(--border));
-  color: var(--brand-primary);
-}
-
-.enrollments-advanced-filters {
-  display: flex;
-  gap: 0.75rem;
-  flex-wrap: wrap;
-  width: 100%;
-  padding-top: 0.25rem;
-}
-
-.enrollments-advanced-filters > * {
-  min-width: 180px;
-  flex: 1 1 180px;
-}
-
-@media (max-width: 900px) {
-  .module-inline-summary,
-  .enrollments-toolbar,
-  .enrollments-toolbar__actions,
-  .enrollments-advanced-filters {
-    display: grid;
-  }
-
-  .module-inline-summary__meta {
-    justify-items: start;
-    text-align: left;
-  }
-}
-</style>
+<style src="./enrollments/EnrollmentsView.css" scoped></style>

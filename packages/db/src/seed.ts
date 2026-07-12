@@ -43,6 +43,7 @@ import {
   academicAreas,
   gradingScales,
   guardians,
+  consentDocuments,
   navigationItems,
   navigationSections,
   roleNavigationItems,
@@ -88,9 +89,10 @@ const NAVIGATION_SECTIONS = [
   { code: 'home', title: 'Inicio', sortOrder: 1 },
   { code: 'admissions-and-enrollment', title: 'Admisión y matrícula', sortOrder: 2 },
   { code: 'academic-operations', title: 'Operación académica', sortOrder: 3 },
-  { code: 'closures', title: 'Cierres y cortes', sortOrder: 4 },
-  { code: 'configuration', title: 'Configuración', sortOrder: 5 },
-  { code: 'institutional', title: 'Institucional', sortOrder: 6 },
+  { code: 'closures', title: 'Cierres', sortOrder: 4 },
+  { code: 'coexistence-inclusion', title: 'Convivencia e inclusión', sortOrder: 5 },
+  { code: 'configuration', title: 'Configuración', sortOrder: 6 },
+  { code: 'institutional', title: 'Institucional', sortOrder: 7 },
 ] as const
 
 const NAVIGATION_ITEMS: NavigationSeedItem[] = [
@@ -104,10 +106,12 @@ const NAVIGATION_ITEMS: NavigationSeedItem[] = [
   { code: 'grades-book', sectionCode: 'academic-operations', label: 'Notas finales', to: '/grades', shortLabel: 'NO', sortOrder: 3, requiredPermission: PERMISSIONS.GRADEBOOK_READ, roles: [ROLE_CODES.SUPER_ADMIN, ROLE_CODES.ADMIN, ROLE_CODES.COORDINATOR, ROLE_CODES.TEACHER] },
   { code: 'academic-observations', sectionCode: 'academic-operations', label: 'Observaciones SIEE', to: '/academic-observations', shortLabel: 'OB', sortOrder: 4, requiredPermission: PERMISSIONS.SIEE_READ, roles: [ROLE_CODES.SUPER_ADMIN, ROLE_CODES.ADMIN, ROLE_CODES.COORDINATOR, ROLE_CODES.TEACHER] },
   { code: 'support-strategies', sectionCode: 'academic-operations', label: 'Planes de apoyo', to: '/support-strategies', shortLabel: 'PA', sortOrder: 5, requiredPermission: PERMISSIONS.SIEE_READ, roles: [ROLE_CODES.SUPER_ADMIN, ROLE_CODES.ADMIN, ROLE_CODES.COORDINATOR, ROLE_CODES.TEACHER] },
-  { code: 'report-cards', sectionCode: 'academic-operations', label: 'Boletines', to: '/report-cards', shortLabel: 'BO', sortOrder: 6, mobileVisible: true, requiredPermission: PERMISSIONS.GRADEBOOK_READ, roles: [ROLE_CODES.SUPER_ADMIN, ROLE_CODES.ADMIN, ROLE_CODES.COORDINATOR, ROLE_CODES.TEACHER] },
+  { code: 'committees', sectionCode: 'academic-operations', label: 'Comités académicos', to: '/committees', shortLabel: 'CM', sortOrder: 6, requiredPermission: PERMISSIONS.ACADEMIC_READ, roles: [ROLE_CODES.SUPER_ADMIN, ROLE_CODES.ADMIN, ROLE_CODES.COORDINATOR] },
+  { code: 'report-cards', sectionCode: 'academic-operations', label: 'Boletines', to: '/report-cards', shortLabel: 'BO', sortOrder: 7, mobileVisible: true, requiredPermission: PERMISSIONS.GRADEBOOK_READ, roles: [ROLE_CODES.SUPER_ADMIN, ROLE_CODES.ADMIN, ROLE_CODES.COORDINATOR, ROLE_CODES.TEACHER] },
   { code: 'periods', sectionCode: 'closures', label: 'Periodos', to: '/academic-periods', shortLabel: 'PE', sortOrder: 1, mobileVisible: true, requiredPermission: PERMISSIONS.ACADEMIC_READ, roles: [ROLE_CODES.SUPER_ADMIN, ROLE_CODES.ADMIN, ROLE_CODES.COORDINATOR] },
   { code: 'years', sectionCode: 'closures', label: 'Años lectivos', to: '/academic-years', shortLabel: 'AN', sortOrder: 2, requiredPermission: PERMISSIONS.ACADEMIC_READ, roles: [ROLE_CODES.SUPER_ADMIN, ROLE_CODES.ADMIN, ROLE_CODES.COORDINATOR] },
-  { code: 'report-cards-closure', sectionCode: 'closures', label: 'Boletines por corte', to: '/report-cards', shortLabel: 'BC', sortOrder: 3, requiredPermission: PERMISSIONS.GRADEBOOK_READ, roles: [ROLE_CODES.SUPER_ADMIN, ROLE_CODES.ADMIN, ROLE_CODES.COORDINATOR] },
+  { code: 'coexistence', sectionCode: 'coexistence-inclusion', label: 'Convivencia escolar', to: '/coexistence', shortLabel: 'CV', sortOrder: 1, requiredPermission: PERMISSIONS.ACADEMIC_READ, roles: [ROLE_CODES.SUPER_ADMIN, ROLE_CODES.ADMIN, ROLE_CODES.COORDINATOR] },
+  { code: 'piar', sectionCode: 'coexistence-inclusion', label: 'PIAR / Inclusión', to: '/piar', shortLabel: 'PI', sortOrder: 2, requiredPermission: PERMISSIONS.SIEE_READ, roles: [ROLE_CODES.SUPER_ADMIN, ROLE_CODES.ADMIN, ROLE_CODES.COORDINATOR] },
   { code: 'grades', sectionCode: 'configuration', label: 'Grados', to: '/academic-grades', shortLabel: 'GR', sortOrder: 1, requiredPermission: PERMISSIONS.ACADEMIC_READ, roles: [ROLE_CODES.SUPER_ADMIN, ROLE_CODES.ADMIN, ROLE_CODES.COORDINATOR] },
   { code: 'academic-levels', sectionCode: 'configuration', label: 'Niveles educativos', to: '/academic-levels', shortLabel: 'NE', sortOrder: 2, requiredPermission: PERMISSIONS.ACADEMIC_READ, roles: [ROLE_CODES.SUPER_ADMIN, ROLE_CODES.ADMIN, ROLE_CODES.COORDINATOR] },
   { code: 'courses', sectionCode: 'configuration', label: 'Cursos', to: '/courses', shortLabel: 'CU', sortOrder: 3, requiredPermission: PERMISSIONS.ACADEMIC_READ, roles: [ROLE_CODES.SUPER_ADMIN, ROLE_CODES.ADMIN, ROLE_CODES.COORDINATOR] },
@@ -121,9 +125,9 @@ const NAVIGATION_ITEMS: NavigationSeedItem[] = [
   { code: 'teachers', sectionCode: 'institutional', label: 'Docentes', to: '/teachers', shortLabel: 'DO', sortOrder: 1, requiredPermission: PERMISSIONS.ACADEMIC_READ, roles: [ROLE_CODES.SUPER_ADMIN, ROLE_CODES.ADMIN, ROLE_CODES.COORDINATOR] },
   { code: 'teacher-assignments', sectionCode: 'institutional', label: 'Carga docente', to: '/teacher-assignments', shortLabel: 'CD', sortOrder: 2, requiredPermission: PERMISSIONS.ACADEMIC_READ, roles: [ROLE_CODES.SUPER_ADMIN, ROLE_CODES.ADMIN, ROLE_CODES.COORDINATOR] },
   { code: 'teacher-responsibilities', sectionCode: 'institutional', label: 'Directores y coordinación', to: '/teacher-responsibilities', shortLabel: 'DG', sortOrder: 3, requiredPermission: PERMISSIONS.ACADEMIC_READ, roles: [ROLE_CODES.SUPER_ADMIN, ROLE_CODES.ADMIN, ROLE_CODES.COORDINATOR] },
-  { code: 'guardians', sectionCode: 'institutional', label: 'Convivencia', to: '/guardians', shortLabel: 'CV', sortOrder: 4, requiredPermission: PERMISSIONS.STUDENTS_READ, roles: [ROLE_CODES.SUPER_ADMIN, ROLE_CODES.ADMIN, ROLE_CODES.COORDINATOR] },
-  { code: 'users', sectionCode: 'institutional', label: 'Usuarios', to: '/users', shortLabel: 'US', sortOrder: 5, requiredPermission: PERMISSIONS.USERS_MANAGE, roles: [ROLE_CODES.SUPER_ADMIN, ROLE_CODES.ADMIN] },
-  { code: 'navigation-admin', sectionCode: 'institutional', label: 'Menú y navegación', to: '/navigation-admin', shortLabel: 'MN', sortOrder: 6, requiredPermission: PERMISSIONS.USERS_MANAGE, roles: [ROLE_CODES.SUPER_ADMIN, ROLE_CODES.ADMIN] },
+  { code: 'users', sectionCode: 'institutional', label: 'Usuarios', to: '/users', shortLabel: 'US', sortOrder: 4, requiredPermission: PERMISSIONS.USERS_MANAGE, roles: [ROLE_CODES.SUPER_ADMIN, ROLE_CODES.ADMIN] },
+  { code: 'navigation-admin', sectionCode: 'institutional', label: 'Menú y navegación', to: '/navigation-admin', shortLabel: 'MN', sortOrder: 5, requiredPermission: PERMISSIONS.USERS_MANAGE, roles: [ROLE_CODES.SUPER_ADMIN, ROLE_CODES.ADMIN] },
+  { code: 'branches', sectionCode: 'institutional', label: 'Sedes', to: '/branches', shortLabel: 'SD', sortOrder: 6, requiredPermission: PERMISSIONS.ACADEMIC_READ, roles: [ROLE_CODES.SUPER_ADMIN, ROLE_CODES.ADMIN, ROLE_CODES.COORDINATOR] },
   { code: 'announcements', sectionCode: 'institutional', label: 'Comunicaciones', to: '/announcements', shortLabel: 'CM', sortOrder: 7, requiredPermission: PERMISSIONS.DASHBOARD_READ, roles: [ROLE_CODES.SUPER_ADMIN, ROLE_CODES.ADMIN, ROLE_CODES.COORDINATOR, ROLE_CODES.TEACHER, ROLE_CODES.CASHIER] },
   { code: 'portfolio', sectionCode: 'institutional', label: 'Financiero', to: '/portfolio', shortLabel: 'FI', sortOrder: 8, requiredPermission: PERMISSIONS.REPORTS_READ, roles: [ROLE_CODES.SUPER_ADMIN, ROLE_CODES.ADMIN, ROLE_CODES.CASHIER] },
   { code: 'reports', sectionCode: 'institutional', label: 'Reportes', to: '/reports', shortLabel: 'RP', sortOrder: 9, requiredPermission: PERMISSIONS.REPORTS_READ, roles: [ROLE_CODES.SUPER_ADMIN, ROLE_CODES.ADMIN, ROLE_CODES.COORDINATOR, ROLE_CODES.CASHIER] },
@@ -449,6 +453,7 @@ async function seed() {
   }
 
   const existingNavigationSections = await db.select().from(navigationSections).where(eq(navigationSections.tenantId, tenantId))
+  const expectedNavigationSectionCodes = new Set<string>(NAVIGATION_SECTIONS.map((section) => section.code))
   for (const section of NAVIGATION_SECTIONS) {
     const existing = existingNavigationSections.find((item) => item.code === section.code)
     if (!existing) {
@@ -456,12 +461,30 @@ async function seed() {
         tenantId,
         ...section,
       })
+    } else if (existing.title !== section.title || existing.sortOrder !== section.sortOrder || !existing.isActive || existing.isDeleted) {
+      await db.update(navigationSections).set({
+        title: section.title,
+        sortOrder: section.sortOrder,
+        isActive: true,
+        isDeleted: false,
+        updatedAt: new Date(),
+      }).where(and(eq(navigationSections.tenantId, tenantId), eq(navigationSections.code, section.code)))
     }
   }
 
-  const savedNavigationSections = await db.select().from(navigationSections).where(eq(navigationSections.tenantId, tenantId))
+  for (const section of existingNavigationSections) {
+    if (!expectedNavigationSectionCodes.has(section.code) && section.isActive && !section.isDeleted) {
+      await db.update(navigationSections).set({
+        isActive: false,
+        updatedAt: new Date(),
+      }).where(eq(navigationSections.id, section.id))
+    }
+  }
+
+  const savedNavigationSections = await db.select().from(navigationSections).where(and(eq(navigationSections.tenantId, tenantId), eq(navigationSections.isDeleted, false)))
   const navigationSectionByCode = Object.fromEntries(savedNavigationSections.map((section) => [section.code, section.id]))
   const existingNavigationItems = await db.select().from(navigationItems).where(eq(navigationItems.tenantId, tenantId))
+  const expectedNavigationItemCodes = new Set<string>(NAVIGATION_ITEMS.map((item) => item.code))
 
   for (const item of NAVIGATION_ITEMS) {
     const sectionId = navigationSectionByCode[item.sectionCode]
@@ -481,6 +504,38 @@ async function seed() {
         mobileVisible: item.mobileVisible ?? false,
         isActive: true,
       })
+    } else if (
+      existing.sectionId !== sectionId ||
+      existing.label !== item.label ||
+      existing.to !== item.to ||
+      existing.shortLabel !== item.shortLabel ||
+      existing.sortOrder !== item.sortOrder ||
+      existing.requiredPermission !== (item.requiredPermission ?? null) ||
+      existing.mobileVisible !== (item.mobileVisible ?? false) ||
+      !existing.isActive ||
+      existing.isDeleted
+    ) {
+      await db.update(navigationItems).set({
+        sectionId,
+        label: item.label,
+        to: item.to,
+        shortLabel: item.shortLabel,
+        sortOrder: item.sortOrder,
+        requiredPermission: item.requiredPermission ?? null,
+        mobileVisible: item.mobileVisible ?? false,
+        isActive: true,
+        isDeleted: false,
+        updatedAt: new Date(),
+      }).where(and(eq(navigationItems.tenantId, tenantId), eq(navigationItems.code, item.code)))
+    }
+  }
+
+  for (const item of existingNavigationItems) {
+    if (!expectedNavigationItemCodes.has(item.code) && item.isActive && !item.isDeleted) {
+      await db.update(navigationItems).set({
+        isActive: false,
+        updatedAt: new Date(),
+      }).where(eq(navigationItems.id, item.id))
     }
   }
 
@@ -1395,6 +1450,62 @@ async function seed() {
     tenantId,
     permissions: permissionCatalog.length,
   })
+
+  const existingConsents = await db.select().from(consentDocuments).where(eq(consentDocuments.tenantId, tenantId))
+  const defaultConsentDocuments = [
+    {
+      code: 'privacy_notice',
+      name: 'Aviso de privacidad',
+      description: 'Aviso de privacidad para familias, estudiantes y colaboradores, conforme a la Ley 1581 de 2012.',
+      documentType: 'privacy_notice',
+      version: '2026-1',
+      body: 'AVISO DE PRIVACIDAD\n\nEl colegio trata los datos personales de estudiantes, acudientes y colaboradores con la finalidad de prestar el servicio educativo, garantizar la seguridad escolar, cumplir obligaciones legales y mantener comunicación con las familias.',
+    },
+    {
+      code: 'data_treatment_authorization',
+      name: 'Autorización de tratamiento de datos personales',
+      description: 'Autorización expresa para el tratamiento de datos personales de estudiantes y acudientes.',
+      documentType: 'data_treatment_authorization',
+      version: '2026-1',
+      body: 'AUTORIZACIÓN DE TRATAMIENTO DE DATOS PERSONALES\n\nYo, en calidad de acudiente, autorizo al colegio para recolectar, almacenar, usar y suprimir mis datos personales y los del estudiante a mi cargo.',
+    },
+    {
+      code: 'image_rights',
+      name: 'Autorización de uso de imagen',
+      description: 'Autorización de uso de imagen del estudiante en piezas institucionales.',
+      documentType: 'image_rights',
+      version: '2026-1',
+      body: 'AUTORIZACIÓN DE USO DE IMAGEN\n\nAutorizo al colegio para usar la imagen del estudiante en actividades institucionales, sin uso comercial.',
+    },
+    {
+      code: 'enrollment_contract',
+      name: 'Contrato de matrícula',
+      description: 'Contrato de prestación de servicios educativos para el año lectivo.',
+      documentType: 'enrollment_contract',
+      version: '2026-1',
+      body: 'CONTRATO DE PRESTACIÓN DE SERVICIOS EDUCATIVOS\n\nEntre el colegio y los acudientes se celebra el presente contrato de matrícula para el año lectivo. El colegio presta el servicio educativo según PEI, SIEE y manual de convivencia. Los acudientes cumplen obligaciones académicas, disciplinarias y financieras.',
+    },
+    {
+      code: 'promissory_note',
+      name: 'Pagaré / Anexo financiero',
+      description: 'Pagaré y compromiso financiero para el año lectivo.',
+      documentType: 'promissory_note',
+      version: '2026-1',
+      body: 'PAGARÉ Y ANEXO FINANCIERO\n\nEl acudiente como responsable financiero se obliga a pagar matrícula, pensiones y otros cobros autorizados para el año lectivo.',
+    },
+  ]
+  for (const consent of defaultConsentDocuments) {
+    if (!existingConsents.find((item) => item.code === consent.code && item.version === consent.version)) {
+      await db.insert(consentDocuments).values({
+        tenantId,
+        ...consent,
+        isActive: true,
+        effectiveFrom: '2026-01-01',
+        createdBy: null,
+        updatedBy: null,
+      })
+    }
+  }
 }
 
 seed().catch((error) => {

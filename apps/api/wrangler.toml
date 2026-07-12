@@ -3,6 +3,9 @@ main = "src/index.ts"
 compatibility_date = "2026-05-16"
 workers_dev = true
 
+[dev]
+port = 8787
+
 [vars]
 DEFAULT_TENANT_ID = "11111111-1111-1111-1111-111111111111"
 

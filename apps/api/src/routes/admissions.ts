@@ -1,10 +1,14 @@
-import { and, asc, count, desc, eq, ilike, or, sql } from 'drizzle-orm'
+import { and, asc, count, desc, eq, ilike, inArray, or, sql } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import {
   academicPeriods,
   academicYears,
   admissionApplications,
+  admissionComments,
+  admissionDecisionReasons,
+  admissionDocumentReviews,
+  admissionStatusHistory,
   enrollments,
   formFieldValues,
   formSubmissions,
@@ -17,9 +21,14 @@ import {
   students,
   tenants,
   uploadedDocuments,
+  users,
 } from '@ofir/db'
 import {
   PERMISSIONS,
+  admissionAssignmentSchema,
+  admissionCommentCreateSchema,
+  admissionDecisionReasonSchema,
+  admissionDocumentReviewSchema,
   admissionProcessSchema,
   manualAdmissionSchema,
   admissionConversionSchema,
@@ -29,6 +38,7 @@ import {
 import { AppError } from '../lib/errors'
 import { created, ok } from '../lib/http'
 import { validateEnrollmentPlacement } from '../lib/enrollment-placement'
+import { ensureRequiredConsentsCaptured, listApplicationConsents } from './consents'
 import { authMiddleware } from '../middleware/auth'
 import { requirePermission } from '../middleware/permissions'
 import { tenantMiddleware } from '../middleware/tenant'
@@ -123,14 +133,180 @@ const canTransitionAdmissionStatus = (currentStatus: string, nextStatus: string)
   if (currentStatus === nextStatus) return true
 
   const transitions: Record<string, string[]> = {
-    draft: ['reviewing', 'rejected'],
-    submitted: ['reviewing', 'accepted', 'rejected'],
-    reviewing: ['accepted', 'rejected'],
-    accepted: ['reviewing', 'rejected'],
+    draft: ['document_review', 'reviewing', 'rejected', 'waitlisted'],
+    submitted: ['document_review', 'reviewing', 'interview_scheduled', 'committee_review', 'accepted', 'accepted_conditional', 'rejected', 'waitlisted', 'needs_correction'],
+    document_review: ['reviewing', 'needs_correction', 'interview_scheduled', 'committee_review', 'accepted', 'accepted_conditional', 'rejected', 'waitlisted'],
+    needs_correction: ['document_review', 'reviewing', 'rejected'],
+    interview_scheduled: ['committee_review', 'reviewing', 'accepted', 'accepted_conditional', 'rejected', 'waitlisted'],
+    committee_review: ['accepted', 'accepted_conditional', 'rejected', 'waitlisted', 'reviewing'],
+    waitlisted: ['reviewing', 'accepted', 'accepted_conditional', 'rejected'],
+    reviewing: ['document_review', 'needs_correction', 'interview_scheduled', 'committee_review', 'accepted', 'accepted_conditional', 'rejected', 'waitlisted'],
+    accepted: ['reviewing', 'rejected', 'converted'],
+    accepted_conditional: ['reviewing', 'accepted', 'rejected', 'converted'],
     rejected: ['reviewing'],
   }
 
   return transitions[currentStatus]?.includes(nextStatus) ?? false
+}
+
+const TERMINAL_STATUSES = new Set(['converted', 'rejected'])
+const REQUIRES_OBSERVATION_STATUSES = new Set(['accepted_conditional', 'needs_correction'])
+const REQUIRES_REJECTION_REASON = new Set(['rejected'])
+
+const recordStatusHistory = async ({
+  db,
+  tenantId,
+  application,
+  toStatus,
+  actorUserId,
+  actorRole,
+  decisionCode,
+  decisionLabel,
+  notes,
+  isInternal,
+  isVisibleToFamily,
+  metadata,
+}: {
+  db: AppContextVariables['db']
+  tenantId: string
+  application: { id: string; status: string }
+  toStatus: string
+  actorUserId: string
+  actorRole?: string
+  decisionCode?: string | null
+  decisionLabel?: string | null
+  notes?: string | null
+  isInternal: boolean
+  isVisibleToFamily: boolean
+  metadata?: Record<string, unknown>
+}) => {
+  const [entry] = await db
+    .insert(admissionStatusHistory)
+    .values({
+      tenantId,
+      admissionApplicationId: application.id,
+      fromStatus: application.status,
+      toStatus,
+      actorUserId,
+      actorRole: actorRole ?? null,
+      decisionCode: decisionCode || null,
+      decisionLabel: decisionLabel || null,
+      isInternal,
+      isVisibleToFamily,
+      notes: notes || null,
+      metadata: metadata ?? {},
+      createdBy: actorUserId,
+      updatedBy: actorUserId,
+    })
+    .returning({ id: admissionStatusHistory.id })
+
+  return entry?.id ?? null
+}
+
+const upsertDecisionReason = async ({
+  db,
+  tenantId,
+  actorUserId,
+  payload,
+}: {
+  db: AppContextVariables['db']
+  tenantId: string
+  actorUserId: string
+  payload: {
+    code: string
+    outcome: string
+    label: string
+    description?: string | null
+    requiresObservation?: boolean
+    sortOrder?: number
+    isActive?: boolean
+  }
+}) => {
+  const [existing] = await db
+    .select({ id: admissionDecisionReasons.id })
+    .from(admissionDecisionReasons)
+    .where(
+      and(
+        eq(admissionDecisionReasons.tenantId, tenantId),
+        eq(admissionDecisionReasons.code, payload.code),
+        eq(admissionDecisionReasons.isDeleted, false),
+      ),
+    )
+    .limit(1)
+
+  if (existing) {
+    await db
+      .update(admissionDecisionReasons)
+      .set({
+        outcome: payload.outcome,
+        label: payload.label,
+        description: payload.description || null,
+        requiresObservation: payload.requiresObservation ?? false,
+        sortOrder: payload.sortOrder ?? 0,
+        isActive: payload.isActive ?? true,
+        updatedAt: new Date(),
+        updatedBy: actorUserId,
+      })
+      .where(eq(admissionDecisionReasons.id, existing.id))
+    return existing.id
+  }
+
+  const [created] = await db
+    .insert(admissionDecisionReasons)
+    .values({
+      tenantId,
+      code: payload.code,
+      outcome: payload.outcome,
+      label: payload.label,
+      description: payload.description || null,
+      requiresObservation: payload.requiresObservation ?? false,
+      sortOrder: payload.sortOrder ?? 0,
+      isActive: payload.isActive ?? true,
+      createdBy: actorUserId,
+      updatedBy: actorUserId,
+    })
+    .returning({ id: admissionDecisionReasons.id })
+
+  return created?.id ?? null
+}
+
+const loadDecisionReasons = async ({
+  db,
+  tenantId,
+  outcome,
+}: {
+  db: AppContextVariables['db']
+  tenantId: string
+  outcome?: string
+}) => {
+  const where = outcome
+    ? and(
+        eq(admissionDecisionReasons.tenantId, tenantId),
+        eq(admissionDecisionReasons.outcome, outcome),
+        eq(admissionDecisionReasons.isActive, true),
+        eq(admissionDecisionReasons.isDeleted, false),
+      )
+    : and(
+        eq(admissionDecisionReasons.tenantId, tenantId),
+        eq(admissionDecisionReasons.isActive, true),
+        eq(admissionDecisionReasons.isDeleted, false),
+      )
+
+  const rows = await db
+    .select()
+    .from(admissionDecisionReasons)
+    .where(where)
+    .orderBy(asc(admissionDecisionReasons.sortOrder), asc(admissionDecisionReasons.label))
+
+  return rows.map((row) => ({
+    id: row.id,
+    code: row.code,
+    outcome: row.outcome,
+    label: row.label,
+    description: row.description ?? null,
+    requiresObservation: row.requiresObservation,
+    sortOrder: row.sortOrder,
+  }))
 }
 
 const formatFieldDisplayValue = (row: {
@@ -508,6 +684,7 @@ admissionRoutes.get('/applications', requirePermission(PERMISSIONS.ACADEMIC_READ
     filters.status ? eq(admissionApplications.status, filters.status) : undefined,
     filters.gradeId ? eq(admissionApplications.requestedGradeId, filters.gradeId) : undefined,
     filters.groupId ? eq(admissionApplications.requestedGroupId, filters.groupId) : undefined,
+    filters.assignedTo ? eq(admissionApplications.assignedTo, filters.assignedTo) : undefined,
     filters.query
       ? or(
           ilike(students.firstName, `%${filters.query}%`),
@@ -544,6 +721,7 @@ admissionRoutes.get('/applications', requirePermission(PERMISSIONS.ACADEMIC_READ
       gradeName: grades.name,
       groupName: groups.name,
       academicYearName: academicYears.name,
+      assignedToName: users.fullName,
       submissionStatus: formSubmissions.status,
     })
     .from(admissionApplications)
@@ -552,6 +730,7 @@ admissionRoutes.get('/applications', requirePermission(PERMISSIONS.ACADEMIC_READ
     .leftJoin(grades, eq(grades.id, admissionApplications.requestedGradeId))
     .leftJoin(groups, eq(groups.id, admissionApplications.requestedGroupId))
     .leftJoin(academicYears, eq(academicYears.id, admissionApplications.academicYearId))
+    .leftJoin(users, eq(users.id, admissionApplications.assignedTo))
     .leftJoin(formSubmissions, eq(formSubmissions.admissionApplicationId, admissionApplications.id))
     .where(whereClause)
     .orderBy(desc(admissionApplications.submittedAt), desc(admissionApplications.createdAt))
@@ -560,7 +739,7 @@ admissionRoutes.get('/applications', requirePermission(PERMISSIONS.ACADEMIC_READ
 
   return c.json(
     ok('Solicitudes cargadas', {
-      items: rows.map(({ application, studentFirstName, studentMiddleName, studentLastName, studentDocumentType, studentDocumentNumber, guardianFirstName, guardianLastName, guardianEmail, gradeName, groupName, academicYearName }) => ({
+      items: rows.map(({ application, studentFirstName, studentMiddleName, studentLastName, studentDocumentType, studentDocumentNumber, guardianFirstName, guardianLastName, guardianEmail, gradeName, groupName, academicYearName, assignedToName, ...rest }) => ({
         id: application.id,
         studentId: application.studentId,
         studentName: [studentFirstName, studentMiddleName, studentLastName].filter(Boolean).join(' '),
@@ -573,6 +752,8 @@ admissionRoutes.get('/applications', requirePermission(PERMISSIONS.ACADEMIC_READ
         requestedGroupName: groupName ?? null,
         academicYearId: application.academicYearId,
         academicYearName: academicYearName ?? '',
+        assignedTo: application.assignedTo,
+        assignedToName: assignedToName ?? null,
         status: application.status,
         source: application.source,
         progress: buildAdmissionProgress(application.status),
@@ -600,6 +781,7 @@ admissionRoutes.get('/applications/:id', requirePermission(PERMISSIONS.ACADEMIC_
       academicYearName: academicYears.name,
       gradeName: grades.name,
       groupName: groups.name,
+      assignedToName: users.fullName,
       submissionId: formSubmissions.id,
       submissionStatus: formSubmissions.status,
       submissionProgressPercent: formSubmissions.progressPercent,
@@ -612,6 +794,7 @@ admissionRoutes.get('/applications/:id', requirePermission(PERMISSIONS.ACADEMIC_
     .leftJoin(academicYears, eq(academicYears.id, admissionApplications.academicYearId))
     .leftJoin(grades, eq(grades.id, admissionApplications.requestedGradeId))
     .leftJoin(groups, eq(groups.id, admissionApplications.requestedGroupId))
+    .leftJoin(users, eq(users.id, admissionApplications.assignedTo))
     .leftJoin(formSubmissions, eq(formSubmissions.admissionApplicationId, admissionApplications.id))
     .where(and(eq(admissionApplications.id, id), eq(admissionApplications.tenantId, tenantId), eq(admissionApplications.isDeleted, false)))
     .limit(1)
@@ -730,6 +913,8 @@ admissionRoutes.get('/applications/:id', requirePermission(PERMISSIONS.ACADEMIC_
         requestedGroupName: row.groupName ?? null,
         academicYearId: row.application.academicYearId,
         academicYearName: row.academicYearName ?? '',
+        assignedTo: row.application.assignedTo,
+        assignedToName: row.assignedToName ?? null,
         status: row.application.status,
         source: row.application.source,
         progress: buildAdmissionProgress(row.application.status),
@@ -773,6 +958,7 @@ admissionRoutes.get('/applications/:id', requirePermission(PERMISSIONS.ACADEMIC_
         : null,
       sections: Array.from(sectionsMap.values()),
       documents: [...normalizedUploaded, ...normalizedMetadata],
+      consents: await listApplicationConsents({ db, tenantId, applicationId: row.application.id }),
     }),
   )
 })
@@ -791,8 +977,40 @@ admissionRoutes.patch('/applications/:id/status', requirePermission(PERMISSIONS.
     .limit(1)
 
   if (!application) throw new AppError('Solicitud no encontrada', 404)
+  if (TERMINAL_STATUSES.has(application.status)) {
+    throw new AppError(`La solicitud ya está en un estado terminal (${application.status})`, 409)
+  }
   if (!canTransitionAdmissionStatus(application.status, payload.status)) {
     throw new AppError(`No se puede cambiar la solicitud de ${application.status} a ${payload.status}`, 409)
+  }
+
+  if (REQUIRES_REJECTION_REASON.has(payload.status) && !payload.decisionCode) {
+    throw new AppError('Para rechazar una solicitud debes seleccionar un motivo estructurado', 400)
+  }
+  if (REQUIRES_OBSERVATION_STATUSES.has(payload.status) && !(payload.observation && payload.observation.trim().length)) {
+    throw new AppError('Para aceptar de forma condicionada o devolver para corrección debes registrar una observación', 400)
+  }
+
+  let decisionLabel: string | null = null
+  if (payload.decisionCode) {
+    const [reason] = await db
+      .select()
+      .from(admissionDecisionReasons)
+      .where(
+        and(
+          eq(admissionDecisionReasons.tenantId, tenantId),
+          eq(admissionDecisionReasons.code, payload.decisionCode),
+          eq(admissionDecisionReasons.isDeleted, false),
+        ),
+      )
+      .limit(1)
+    if (!reason) {
+      throw new AppError('El motivo de decisión seleccionado no existe o está inactivo', 400)
+    }
+    if (reason.requiresObservation && !(payload.observation && payload.observation.trim().length)) {
+      throw new AppError(`El motivo "${reason.label}" requiere una observación`, 400)
+    }
+    decisionLabel = reason.label
   }
 
   const now = new Date()
@@ -801,10 +1019,10 @@ admissionRoutes.patch('/applications/:id/status', requirePermission(PERMISSIONS.
     .set({
       status: payload.status,
       notes: payload.notes === undefined ? application.notes : payload.notes || null,
-      reviewedAt: payload.status === 'reviewing' || payload.status === 'accepted' || payload.status === 'rejected' ? now : application.reviewedAt,
-      reviewedBy: payload.status === 'reviewing' || payload.status === 'accepted' || payload.status === 'rejected' ? user.id : application.reviewedBy,
-      acceptedAt: payload.status === 'accepted' ? now : payload.status === 'rejected' ? null : application.acceptedAt,
-      rejectedAt: payload.status === 'rejected' ? now : payload.status === 'accepted' ? null : application.rejectedAt,
+      reviewedAt: now,
+      reviewedBy: user.id,
+      acceptedAt: payload.status === 'accepted' || payload.status === 'accepted_conditional' ? now : payload.status === 'rejected' ? null : application.acceptedAt,
+      rejectedAt: payload.status === 'rejected' ? now : payload.status === 'accepted' || payload.status === 'accepted_conditional' ? null : application.rejectedAt,
       updatedAt: now,
       updatedBy: user.id,
     })
@@ -820,6 +1038,23 @@ admissionRoutes.patch('/applications/:id/status', requirePermission(PERMISSIONS.
 
   if (!updated) throw new AppError('No fue posible actualizar la solicitud', 500)
 
+  const historyId = await recordStatusHistory({
+    db,
+    tenantId,
+    application,
+    toStatus: payload.status,
+    actorUserId: user.id,
+    actorRole: user.roleCodes[0] ?? undefined,
+    decisionCode: payload.decisionCode || null,
+    decisionLabel,
+    notes: payload.observation || payload.notes || null,
+    isInternal: payload.isInternal ?? true,
+    isVisibleToFamily: payload.isVisibleToFamily ?? true,
+    metadata: {
+      source: 'status_update',
+    },
+  })
+
   await writeAuditLog(db, {
     tenantId,
     actorUserId: user.id,
@@ -829,7 +1064,11 @@ admissionRoutes.patch('/applications/:id/status', requirePermission(PERMISSIONS.
     changes: {
       from: application.status,
       to: payload.status,
+      decisionCode: payload.decisionCode || null,
+      decisionLabel,
       notes: payload.notes || null,
+      observation: payload.observation || null,
+      historyId,
     },
     ipAddress: c.req.header('cf-connecting-ip'),
   })
@@ -841,6 +1080,9 @@ admissionRoutes.patch('/applications/:id/status', requirePermission(PERMISSIONS.
     acceptedAt: updated.acceptedAt?.toISOString() ?? null,
     rejectedAt: updated.rejectedAt?.toISOString() ?? null,
     notes: updated.notes ?? null,
+    decisionCode: payload.decisionCode || null,
+    decisionLabel,
+    historyId,
   }))
 })
 
@@ -1085,6 +1327,28 @@ admissionRoutes.post('/applications/:id/convert-to-enrollment', requirePermissio
     throw new AppError('El estudiante ya tiene matrícula para ese año lectivo', 409)
   }
 
+  await ensureRequiredConsentsCaptured({
+    db,
+    tenantId,
+    applicationId: application.id,
+    requiredCodes: ['privacy_notice', 'data_treatment_authorization'],
+  })
+
+  const blockingDocuments = await db
+    .select({ id: admissionDocumentReviews.id, status: admissionDocumentReviews.status })
+    .from(admissionDocumentReviews)
+    .where(
+      and(
+        eq(admissionDocumentReviews.tenantId, tenantId),
+        eq(admissionDocumentReviews.admissionApplicationId, application.id),
+        eq(admissionDocumentReviews.isDeleted, false),
+        inArray(admissionDocumentReviews.status, ['rejected', 'needs_correction']),
+      ),
+    )
+  if (blockingDocuments.length) {
+    throw new AppError('La solicitud tiene documentos rechazados o pendientes de corrección. Resuélvelos antes de matricular.', 409)
+  }
+
   await validateEnrollmentPlacement({
     db,
     tenantId,
@@ -1101,6 +1365,8 @@ admissionRoutes.post('/applications/:id/convert-to-enrollment', requirePermissio
       academicYearId: payload.academicYearId,
       gradeId: payload.gradeId,
       groupId: payload.groupId || null,
+      branchId: payload.branchId || null,
+      journey: payload.journey || null,
       admissionApplicationId: application.id,
       enrollmentType: application.source === 'new_student' ? 'new' : application.source === 'transfer' ? 'transfer' : 'renewal',
       enrollmentStatus: payload.enrollmentStatus,
@@ -1136,5 +1402,499 @@ admissionRoutes.post('/applications/:id/convert-to-enrollment', requirePermissio
     ipAddress: c.req.header('cf-connecting-ip'),
   })
 
+  await recordStatusHistory({
+    db,
+    tenantId,
+    application: { id: application.id, status: 'accepted' },
+    toStatus: 'converted',
+    actorUserId: user.id,
+    actorRole: user.roleCodes[0] ?? undefined,
+    decisionLabel: 'Conversión a matrícula',
+    notes: 'Conversión automática al crear la matrícula',
+    isInternal: true,
+    isVisibleToFamily: false,
+    metadata: { enrollmentId: enrollment.id },
+  })
+
   return c.json(ok('Solicitud convertida a matrícula', { id: enrollment.id }))
+})
+
+admissionRoutes.get('/decision-reasons', requirePermission(PERMISSIONS.ACADEMIC_READ), async (c) => {
+  const db = c.get('db')
+  const tenantId = c.get('tenantId')
+
+  const outcome = c.req.query('outcome')
+  const items = await loadDecisionReasons({ db, tenantId, outcome })
+
+  return c.json(ok('Motivos de decisión cargados', { items }))
+})
+
+admissionRoutes.post('/decision-reasons', requirePermission(PERMISSIONS.ACADEMIC_WRITE), zValidator('json', admissionDecisionReasonSchema), async (c) => {
+  const db = c.get('db')
+  const tenantId = c.get('tenantId')
+  const user = c.get('user')
+  const payload = c.req.valid('json')
+
+  const id = await upsertDecisionReason({
+    db,
+    tenantId,
+    actorUserId: user.id,
+    payload,
+  })
+
+  if (!id) throw new AppError('No fue posible guardar el motivo de decisión', 500)
+
+  await writeAuditLog(db, {
+    tenantId,
+    actorUserId: user.id,
+    entity: 'admission_decision_reasons',
+    entityId: id,
+    action: 'upsert',
+    changes: payload as Record<string, unknown>,
+    ipAddress: c.req.header('cf-connecting-ip'),
+  })
+
+  return c.json(created('Motivo de decisión guardado', { id }), 201)
+})
+
+admissionRoutes.get('/applications/:id/history', requirePermission(PERMISSIONS.ACADEMIC_READ), async (c) => {
+  const db = c.get('db')
+  const tenantId = c.get('tenantId')
+  const id = c.req.param('id')
+
+  const [application] = await db
+    .select({ id: admissionApplications.id })
+    .from(admissionApplications)
+    .where(and(eq(admissionApplications.id, id), eq(admissionApplications.tenantId, tenantId), eq(admissionApplications.isDeleted, false)))
+    .limit(1)
+  if (!application) throw new AppError('Solicitud no encontrada', 404)
+
+  const items = await db
+    .select()
+    .from(admissionStatusHistory)
+    .where(
+      and(
+        eq(admissionStatusHistory.tenantId, tenantId),
+        eq(admissionStatusHistory.admissionApplicationId, id),
+        eq(admissionStatusHistory.isDeleted, false),
+      ),
+    )
+    .orderBy(desc(admissionStatusHistory.createdAt))
+
+  return c.json(ok('Historial de la solicitud cargado', {
+    items: items.map((item) => ({
+      id: item.id,
+      fromStatus: item.fromStatus,
+      toStatus: item.toStatus,
+      actorUserId: item.actorUserId,
+      actorRole: item.actorRole,
+      decisionCode: item.decisionCode,
+      decisionLabel: item.decisionLabel,
+      notes: item.notes,
+      isInternal: item.isInternal,
+      isVisibleToFamily: item.isVisibleToFamily,
+      metadata: item.metadata,
+      createdAt: item.createdAt.toISOString(),
+    })),
+  }))
+})
+
+admissionRoutes.get('/applications/:id/document-reviews', requirePermission(PERMISSIONS.ACADEMIC_READ), async (c) => {
+  const db = c.get('db')
+  const tenantId = c.get('tenantId')
+  const id = c.req.param('id')
+
+  const [application] = await db
+    .select({ id: admissionApplications.id })
+    .from(admissionApplications)
+    .where(and(eq(admissionApplications.id, id), eq(admissionApplications.tenantId, tenantId), eq(admissionApplications.isDeleted, false)))
+    .limit(1)
+  if (!application) throw new AppError('Solicitud no encontrada', 404)
+
+  const rows = await db
+    .select({
+      review: admissionDocumentReviews,
+      document: uploadedDocuments,
+    })
+    .from(admissionDocumentReviews)
+    .innerJoin(uploadedDocuments, eq(uploadedDocuments.id, admissionDocumentReviews.uploadedDocumentId))
+    .where(
+      and(
+        eq(admissionDocumentReviews.tenantId, tenantId),
+        eq(admissionDocumentReviews.admissionApplicationId, id),
+        eq(admissionDocumentReviews.isDeleted, false),
+      ),
+    )
+    .orderBy(desc(admissionDocumentReviews.reviewedAt), desc(admissionDocumentReviews.createdAt))
+
+  return c.json(ok('Revisión documental cargada', {
+    items: rows.map(({ review, document }) => ({
+      id: review.id,
+      uploadedDocumentId: document.id,
+      documentCode: String((document.metadata as { documentCode?: unknown } | null)?.documentCode ?? document.requiredDocumentId),
+      fileName: document.fileName,
+      status: review.status,
+      reasonCode: review.reasonCode,
+      reasonLabel: review.reasonLabel,
+      notes: review.notes,
+      requestedCorrection: review.requestedCorrection,
+      reviewedBy: review.reviewedBy,
+      reviewedAt: review.reviewedAt?.toISOString() ?? null,
+      createdAt: review.createdAt.toISOString(),
+    })),
+  }))
+})
+
+admissionRoutes.post(
+  '/applications/:id/documents/:documentId/review',
+  requirePermission(PERMISSIONS.ACADEMIC_WRITE),
+  zValidator('json', admissionDocumentReviewSchema),
+  async (c) => {
+    const db = c.get('db')
+    const tenantId = c.get('tenantId')
+    const user = c.get('user')
+    const id = c.req.param('id')
+    const documentId = c.req.param('documentId')
+    const payload = c.req.valid('json')
+
+    const [application] = await db
+      .select({ id: admissionApplications.id })
+      .from(admissionApplications)
+      .where(and(eq(admissionApplications.id, id), eq(admissionApplications.tenantId, tenantId), eq(admissionApplications.isDeleted, false)))
+      .limit(1)
+    if (!application) throw new AppError('Solicitud no encontrada', 404)
+
+    const [document] = await db
+      .select()
+      .from(uploadedDocuments)
+      .where(
+        and(
+          eq(uploadedDocuments.id, documentId),
+          eq(uploadedDocuments.tenantId, tenantId),
+          eq(uploadedDocuments.formSubmissionId, sql`(SELECT submission_id FROM admission_applications WHERE id = ${id})`),
+          eq(uploadedDocuments.isDeleted, false),
+        ),
+      )
+      .limit(1)
+
+    if (!document) throw new AppError('Documento no encontrado para esta solicitud', 404)
+
+    const now = new Date()
+    const [existing] = await db
+      .select({ id: admissionDocumentReviews.id })
+      .from(admissionDocumentReviews)
+      .where(
+        and(
+          eq(admissionDocumentReviews.tenantId, tenantId),
+          eq(admissionDocumentReviews.uploadedDocumentId, documentId),
+          eq(admissionDocumentReviews.isDeleted, false),
+        ),
+      )
+      .limit(1)
+
+    let reasonLabel: string | null = null
+    if (payload.reasonCode) {
+      const [reason] = await db
+        .select()
+        .from(admissionDecisionReasons)
+        .where(
+          and(
+            eq(admissionDecisionReasons.tenantId, tenantId),
+            eq(admissionDecisionReasons.code, payload.reasonCode),
+            eq(admissionDecisionReasons.isDeleted, false),
+          ),
+        )
+        .limit(1)
+      if (reason) reasonLabel = reason.label
+    }
+
+    const review = existing
+      ? (
+          await db
+            .update(admissionDocumentReviews)
+            .set({
+              status: payload.status,
+              reasonCode: payload.reasonCode || null,
+              reasonLabel: payload.reasonLabel || reasonLabel,
+              notes: payload.notes || null,
+              requestedCorrection: payload.requestedCorrection || null,
+              reviewedBy: user.id,
+              reviewedAt: now,
+              updatedAt: now,
+              updatedBy: user.id,
+            })
+            .where(eq(admissionDocumentReviews.id, existing.id))
+            .returning()
+        )[0]
+      : (
+          await db
+            .insert(admissionDocumentReviews)
+            .values({
+              tenantId,
+              admissionApplicationId: id,
+              uploadedDocumentId: documentId,
+              status: payload.status,
+              reasonCode: payload.reasonCode || null,
+              reasonLabel: payload.reasonLabel || reasonLabel,
+              notes: payload.notes || null,
+              requestedCorrection: payload.requestedCorrection || null,
+              reviewedBy: user.id,
+              reviewedAt: now,
+              createdBy: user.id,
+              updatedBy: user.id,
+            })
+            .returning()
+        )[0]
+
+    if (!review) throw new AppError('No fue posible guardar la revisión documental', 500)
+
+    await writeAuditLog(db, {
+      tenantId,
+      actorUserId: user.id,
+      entity: 'admission_document_reviews',
+      entityId: review.id,
+      action: 'review',
+      changes: {
+        applicationId: id,
+        uploadedDocumentId: documentId,
+        status: payload.status,
+        reasonCode: payload.reasonCode || null,
+        reasonLabel: payload.reasonLabel || reasonLabel,
+        notes: payload.notes || null,
+        requestedCorrection: payload.requestedCorrection || null,
+      },
+      ipAddress: c.req.header('cf-connecting-ip'),
+    })
+
+    return c.json(ok('Revisión documental registrada', {
+      id: review.id,
+      status: review.status,
+      reviewedAt: review.reviewedAt?.toISOString() ?? null,
+    }))
+  },
+)
+
+admissionRoutes.get('/users/staff', requirePermission(PERMISSIONS.ACADEMIC_READ), async (c) => {
+  const db = c.get('db')
+  const tenantId = c.get('tenantId')
+
+  const staff = await db
+    .select({
+      id: users.id,
+      fullName: users.fullName,
+      email: users.email,
+    })
+    .from(users)
+    .where(and(
+      eq(users.tenantId, tenantId),
+      eq(users.isDeleted, false),
+      eq(users.status, 'active'),
+    ))
+    .orderBy(asc(users.fullName))
+
+  return c.json(ok('Personal cargado', { items: staff }))
+})
+
+admissionRoutes.patch('/applications/:id/assign', requirePermission(PERMISSIONS.ACADEMIC_WRITE), zValidator('json', admissionAssignmentSchema), async (c) => {
+  const db = c.get('db')
+  const tenantId = c.get('tenantId')
+  const user = c.get('user')
+  const id = c.req.param('id')
+  const payload = c.req.valid('json')
+
+  const [application] = await db
+    .select({ id: admissionApplications.id, assignedTo: admissionApplications.assignedTo })
+    .from(admissionApplications)
+    .where(and(eq(admissionApplications.id, id), eq(admissionApplications.tenantId, tenantId), eq(admissionApplications.isDeleted, false)))
+    .limit(1)
+
+  if (!application) throw new AppError('Solicitud no encontrada', 404)
+
+  const [updated] = await db
+    .update(admissionApplications)
+    .set({ assignedTo: payload.assignedTo, updatedAt: new Date(), updatedBy: user.id })
+    .where(eq(admissionApplications.id, id))
+    .returning({ id: admissionApplications.id, assignedTo: admissionApplications.assignedTo })
+
+  await writeAuditLog(db, {
+    tenantId,
+    actorUserId: user.id,
+    entity: 'admission_applications',
+    entityId: id,
+    action: 'assign',
+    changes: { from: application.assignedTo, to: payload.assignedTo },
+    ipAddress: c.req.header('cf-connecting-ip'),
+  })
+
+  return c.json(ok('Responsable asignado', { id: updated!.id, assignedTo: updated!.assignedTo }))
+})
+
+admissionRoutes.get('/applications/:id/comments', requirePermission(PERMISSIONS.ACADEMIC_READ), async (c) => {
+  const db = c.get('db')
+  const tenantId = c.get('tenantId')
+  const id = c.req.param('id')
+
+  const rows = await db
+    .select({
+      id: admissionComments.id,
+      content: admissionComments.content,
+      isInternalOnly: admissionComments.isInternalOnly,
+      createdAt: admissionComments.createdAt,
+      authorId: admissionComments.authorId,
+      authorName: users.fullName,
+    })
+    .from(admissionComments)
+    .leftJoin(users, eq(users.id, admissionComments.authorId))
+    .where(and(
+      eq(admissionComments.tenantId, tenantId),
+      eq(admissionComments.admissionApplicationId, id),
+      eq(admissionComments.isDeleted, false),
+    ))
+    .orderBy(asc(admissionComments.createdAt))
+
+  return c.json(ok('Comentarios cargados', {
+    items: rows.map((row) => ({
+      id: row.id,
+      content: row.content,
+      isInternalOnly: row.isInternalOnly,
+      authorName: row.authorName ?? 'Sistema',
+      createdAt: row.createdAt.toISOString(),
+    })),
+  }))
+})
+
+admissionRoutes.post('/applications/:id/comments', requirePermission(PERMISSIONS.ACADEMIC_WRITE), zValidator('json', admissionCommentCreateSchema), async (c) => {
+  const db = c.get('db')
+  const tenantId = c.get('tenantId')
+  const user = c.get('user')
+  const id = c.req.param('id')
+  const payload = c.req.valid('json')
+
+  const [application] = await db
+    .select({ id: admissionApplications.id })
+    .from(admissionApplications)
+    .where(and(eq(admissionApplications.id, id), eq(admissionApplications.tenantId, tenantId), eq(admissionApplications.isDeleted, false)))
+    .limit(1)
+
+  if (!application) throw new AppError('Solicitud no encontrada', 404)
+
+  const [comment] = await db
+    .insert(admissionComments)
+    .values({
+      tenantId,
+      admissionApplicationId: id,
+      authorId: user.id,
+      content: payload.content,
+      isInternalOnly: payload.isInternalOnly,
+      createdBy: user.id,
+      updatedBy: user.id,
+    })
+    .returning({ id: admissionComments.id, content: admissionComments.content, createdAt: admissionComments.createdAt })
+
+  if (!comment) throw new AppError('No fue posible crear el comentario', 500)
+
+  return c.json(created('Comentario agregado', {
+    id: comment.id,
+    content: comment.content,
+    createdAt: comment.createdAt.toISOString(),
+  }), 201)
+})
+
+admissionRoutes.get('/applications/:id/file', requirePermission(PERMISSIONS.ACADEMIC_READ), async (c) => {
+  const db = c.get('db')
+  const tenantId = c.get('tenantId')
+  const id = c.req.param('id')
+
+  const [application] = await db
+    .select()
+    .from(admissionApplications)
+    .where(and(eq(admissionApplications.id, id), eq(admissionApplications.tenantId, tenantId), eq(admissionApplications.isDeleted, false)))
+    .limit(1)
+  if (!application) throw new AppError('Solicitud no encontrada', 404)
+
+  const [student] = await db
+    .select()
+    .from(students)
+    .where(and(eq(students.id, application.studentId), eq(students.tenantId, tenantId), eq(students.isDeleted, false)))
+    .limit(1)
+
+  const guardianRows = await db
+    .select({ link: studentGuardians, guardian: guardians })
+    .from(studentGuardians)
+    .innerJoin(guardians, eq(guardians.id, studentGuardians.guardianId))
+    .where(and(eq(studentGuardians.tenantId, tenantId), eq(studentGuardians.studentId, application.studentId), eq(studentGuardians.isDeleted, false)))
+    .orderBy(desc(studentGuardians.isPrimary), desc(studentGuardians.isLegalRepresentative))
+
+  const documents = await db
+    .select()
+    .from(uploadedDocuments)
+    .where(and(eq(uploadedDocuments.tenantId, tenantId), eq(uploadedDocuments.studentId, application.studentId), eq(uploadedDocuments.isDeleted, false)))
+    .orderBy(desc(uploadedDocuments.uploadedAt))
+
+  return c.json(ok('Expediente de aspirante cargado', {
+    application: { id: application.id, status: application.status, source: application.source, createdAt: application.createdAt.toISOString(), submittedAt: application.submittedAt?.toISOString() ?? null, notes: application.notes ?? null },
+    student: student ? { id: student.id, firstName: student.firstName, lastName: student.lastName, documentType: student.documentType, documentNumber: student.documentNumber, birthDate: student.birthDate, gender: student.gender } : null,
+    guardians: guardianRows.map(({ link, guardian }) => ({ id: guardian.id, firstName: guardian.firstName, lastName: guardian.lastName, documentType: guardian.documentType, documentNumber: guardian.documentNumber, email: guardian.email, phone: guardian.phone, relationship: guardian.relationship, relationshipType: link.relationshipType, isPrimary: link.isPrimary, isLegalRepresentative: link.isLegalRepresentative, isFinancialResponsible: link.isFinancialResponsible })),
+    documents: documents.map((d) => ({ id: d.id, fileName: d.fileName, mimeType: d.mimeType, status: d.status, fileSizeBytes: d.fileSizeBytes, uploadedAt: d.uploadedAt.toISOString() })),
+  }))
+})
+
+admissionRoutes.get('/export/csv', requirePermission(PERMISSIONS.ACADEMIC_READ), async (c) => {
+  const db = c.get('db')
+  const tenantId = c.get('tenantId')
+  const year = Number(c.req.query('year') ?? '0')
+  const status = c.req.query('status') || undefined
+
+  if (!Number.isInteger(year)) throw new AppError('Año lectivo requerido para exportación', 400)
+
+  let academicYearId: string | undefined
+  if (year) {
+    const [row] = await db.select({ id: academicYears.id }).from(academicYears).where(and(eq(academicYears.tenantId, tenantId), eq(academicYears.year, year), eq(academicYears.isDeleted, false))).limit(1)
+    if (!row) throw new AppError('Año lectivo no encontrado', 404)
+    academicYearId = row.id
+  }
+
+  const where = and(
+    eq(admissionApplications.tenantId, tenantId),
+    eq(admissionApplications.isDeleted, false),
+    academicYearId ? eq(admissionApplications.academicYearId, academicYearId) : undefined,
+    status ? eq(admissionApplications.status, status) : undefined,
+  )
+
+  const rows = await db
+    .select({
+      id: admissionApplications.id,
+      status: admissionApplications.status,
+      source: admissionApplications.source,
+      createdAt: admissionApplications.createdAt,
+      submittedAt: admissionApplications.submittedAt,
+      studentFirstName: students.firstName,
+      studentMiddleName: students.middleName,
+      studentLastName: students.lastName,
+      studentDocumentType: students.documentType,
+      studentDocumentNumber: students.documentNumber,
+      guardianFirstName: guardians.firstName,
+      guardianLastName: guardians.lastName,
+      guardianEmail: guardians.email,
+      gradeName: grades.name,
+    })
+    .from(admissionApplications)
+    .leftJoin(students, eq(students.id, admissionApplications.studentId))
+    .leftJoin(guardians, eq(guardians.id, admissionApplications.primaryGuardianId))
+    .leftJoin(grades, eq(grades.id, admissionApplications.requestedGradeId))
+    .where(where)
+    .orderBy(desc(admissionApplications.createdAt))
+
+  const header = 'id,estudiante,tipo_documento,numero_documento,acudiente,email_acudiente,grado_solicitado,fuente,estado,fecha_creacion\n'
+  const bodyLines = rows.map((r) => [
+    r.id,
+    [r.studentFirstName, r.studentMiddleName, r.studentLastName].filter(Boolean).join(' '),
+    r.studentDocumentType ?? '', r.studentDocumentNumber ?? '',
+    [r.guardianFirstName, r.guardianLastName].filter(Boolean).join(' '),
+    r.guardianEmail ?? '', r.gradeName ?? '', r.source ?? '', r.status ?? '', r.createdAt.toISOString(),
+  ].map((v) => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n')
+
+  c.res.headers.set('Content-Type', 'text/csv; charset=utf-8')
+  c.res.headers.set('Content-Disposition', `attachment; filename="inscripciones-${year}.csv"`)
+  return c.body(header + bodyLines)
 })

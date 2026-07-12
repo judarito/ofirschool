@@ -249,6 +249,7 @@ import type {
   AcademicPeriodDto, 
   AcademicYearDto, 
   CourseDto, 
+  CourseSubjectDto,
   GradeSubjectDto, 
   SupportStrategyDto,
   TeacherDto,
@@ -270,6 +271,7 @@ const academicYears = ref<AcademicYearDto[]>([])
 const periods = ref<AcademicPeriodDto[]>([])
 const courses = ref<CourseDto[]>([])
 const gradeSubjects = ref<GradeSubjectDto[]>([])
+const courseSubjects = ref<CourseSubjectDto[]>([])
 const teachers = ref<TeacherDto[]>([])
 const students = ref<any[]>([])
 const strategies = ref<SupportStrategyDto[]>([])
@@ -331,10 +333,16 @@ const selectedAcademicYearNumber = computed(() =>
 )
 
 const availableSubjects = computed(() => {
-  const matches = gradeSubjects.value.filter((item) =>
+  const assignedMatches = courseSubjects.value.filter((item) =>
     item.academicYearId === filters.academicYearId &&
-    (!filters.groupId || selectedGroupObj.value?.gradeId === item.gradeId),
+    (!filters.groupId || item.groupId === filters.groupId),
   )
+  const matches = assignedMatches.length
+    ? assignedMatches.map((item) => ({ subjectId: item.subjectId, subjectName: item.subjectName || 'Materia sin nombre' }))
+    : gradeSubjects.value.filter((item) =>
+      item.academicYearId === filters.academicYearId &&
+      (!filters.groupId || selectedGroupObj.value?.gradeId === item.gradeId),
+    )
   const seen = new Set<string>()
   return matches.filter((item) => {
     if (seen.has(item.subjectId)) return false
@@ -399,17 +407,19 @@ watch(
 )
 
 const loadOptions = async () => {
-  const [yearsResponse, periodsResponse, coursesResponse, assignmentsResponse, teachersResponse] = await Promise.all([
+  const [yearsResponse, periodsResponse, coursesResponse, assignmentsResponse, courseSubjectsResponse, teachersResponse] = await Promise.all([
     api.getAcademicYears({ page: 1, pageSize: 100 }),
     api.getAcademicPeriods({ page: 1, pageSize: 100 }),
     api.getCourses({ page: 1, pageSize: 100 }),
     api.getGradeSubjects({ page: 1, pageSize: 100 }),
+    api.getCourseSubjects({}),
     api.getTeachers({ page: 1, pageSize: 100 }),
   ])
   academicYears.value = yearsResponse.data.items
   periods.value = periodsResponse.data.items
   courses.value = coursesResponse.data.items
   gradeSubjects.value = assignmentsResponse.data.items
+  courseSubjects.value = courseSubjectsResponse.data.items
   teachers.value = teachersResponse.data.items
   filters.academicYearId ||= academicContext.activeYearId || academicYears.value[0]?.id || ''
 }

@@ -12,6 +12,11 @@ export const routes: RouteRecordRaw[] = [
     component: () => import('../views/PublicAdmissionView.vue'),
   },
   {
+    path: '/estudiante/:studentId',
+    name: 'student-portal',
+    component: () => import('../views/StudentPortalView.vue'),
+  },
+  {
     path: '/',
     component: () => import('../layouts/AppLayout.vue'),
     children: [
@@ -40,6 +45,9 @@ export const routes: RouteRecordRaw[] = [
       { path: 'attendance', name: 'attendance', component: () => import('../views/AttendanceView.vue') },
       { path: 'grades', name: 'grades', component: () => import('../views/GradebookView.vue') },
       { path: 'report-cards', name: 'report-cards', component: () => import('../views/ReportCardsView.vue') },
+      { path: 'committees', name: 'committees', component: () => import('../views/CommitteesView.vue') },
+      { path: 'coexistence', name: 'coexistence', component: () => import('../views/CoexistenceView.vue') },
+      { path: 'piar', name: 'piar', component: () => import('../views/PiarView.vue') },
       { path: 'evaluation-activities', name: 'evaluation-activities', component: () => import('../views/EvaluationActivitiesView.vue') },
       { path: 'evaluation-activities/:activityId/scores', name: 'activity-scores', component: () => import('../views/ActivityGradebookView.vue') },
       { path: 'academic-observations', name: 'academic-observations', component: () => import('../views/ObservationsView.vue') },

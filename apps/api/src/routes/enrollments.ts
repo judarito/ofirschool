@@ -775,6 +775,8 @@ enrollmentRoutes.get('/', requirePermission(PERMISSIONS.ACADEMIC_READ), zValidat
         gradeName: gradeName ?? '',
         groupId: enrollment.groupId,
         groupName: groupName ?? null,
+        branchId: enrollment.branchId,
+        journey: enrollment.journey,
         enrollmentType: enrollment.enrollmentType,
         enrollmentStatus: enrollment.enrollmentStatus,
         enrollmentDate: enrollment.enrollmentDate.toISOString(),
@@ -886,6 +888,8 @@ enrollmentRoutes.post('/', requirePermission(PERMISSIONS.ACADEMIC_WRITE), zValid
       academicYearId: payload.academicYearId,
       gradeId: payload.gradeId,
       groupId: payload.groupId || null,
+      branchId: payload.branchId || null,
+      journey: payload.journey || null,
       admissionApplicationId: payload.admissionApplicationId || null,
       previousEnrollmentId: payload.previousEnrollmentId || null,
       enrollmentType: payload.enrollmentType,
@@ -1108,4 +1112,62 @@ enrollmentRoutes.post('/annual-promotion-decisions', requirePermission(PERMISSIO
     updatedCount: updatedItems.length,
     items: updatedItems,
   }))
+})
+
+enrollmentRoutes.get('/export/csv', requirePermission(PERMISSIONS.ACADEMIC_READ), async (c) => {
+  const db = c.get('db')
+  const tenantId = c.get('tenantId')
+  const year = Number(c.req.query('year') ?? '0')
+
+  if (!Number.isInteger(year)) throw new AppError('Año lectivo requerido para exportación', 400)
+
+  const [academicYear] = await db
+    .select({ id: academicYears.id })
+    .from(academicYears)
+    .where(and(eq(academicYears.tenantId, tenantId), eq(academicYears.year, year), eq(academicYears.isDeleted, false)))
+    .limit(1)
+  if (!academicYear) throw new AppError('Año lectivo no encontrado', 404)
+
+  const rows = await db
+    .select({
+      id: enrollments.id,
+      studentId: students.id,
+      studentFirstName: students.firstName,
+      studentLastName: students.lastName,
+      studentDocumentType: students.documentType,
+      studentDocumentNumber: students.documentNumber,
+      gradeName: grades.name,
+      groupName: groups.name,
+      enrollmentType: enrollments.enrollmentType,
+      enrollmentStatus: enrollments.enrollmentStatus,
+      documentStatus: enrollments.documentStatus,
+      financialStatus: enrollments.financialStatus,
+      academicStatus: enrollments.academicStatus,
+      journey: enrollments.journey,
+      sequenceNumber: enrollments.sequenceNumber,
+      enrollmentDate: enrollments.enrollmentDate,
+    })
+    .from(enrollments)
+    .innerJoin(students, eq(students.id, enrollments.studentId))
+    .leftJoin(grades, eq(grades.id, enrollments.gradeId))
+    .leftJoin(groups, eq(groups.id, enrollments.groupId))
+    .where(
+      and(
+        eq(enrollments.tenantId, tenantId),
+        eq(enrollments.academicYearId, academicYear.id),
+        eq(enrollments.isDeleted, false),
+      ),
+    )
+    .orderBy(asc(enrollments.sequenceNumber), asc(enrollments.enrollmentDate))
+
+  const header = 'consecutivo,estudiante,tipo_documento,numero_documento,grado,grupo,jornada,tipo_matricula,estado_matricula,estado_documental,estado_financiero,estado_academico,fecha_matricula\n'
+  const bodyLines = rows.map((r) => [
+    r.sequenceNumber ?? '', [r.studentFirstName, r.studentLastName].filter(Boolean).join(' '), r.studentDocumentType ?? '', r.studentDocumentNumber ?? '',
+    r.gradeName ?? '', r.groupName ?? '', r.journey ?? '', r.enrollmentType ?? '', r.enrollmentStatus ?? '',
+    r.documentStatus ?? '', r.financialStatus ?? '', r.academicStatus ?? '', r.enrollmentDate.toISOString(),
+  ].map((v) => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n')
+
+  c.res.headers.set('Content-Type', 'text/csv; charset=utf-8')
+  c.res.headers.set('Content-Disposition', `attachment; filename="matriculas-${year}.csv"`)
+  return c.body(header + bodyLines)
 })

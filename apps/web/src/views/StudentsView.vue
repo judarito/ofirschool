@@ -102,7 +102,11 @@
         </label>
         <label>
           Tipo documento
-          <input v-model="form.documentType" required />
+          <select v-model="form.documentType" required>
+            <option v-for="option in studentDocumentTypeOptions" :key="option.value" :value="option.value">
+              {{ option.label }}
+            </option>
+          </select>
         </label>
         <label>
           Número documento
@@ -142,7 +146,121 @@
             <option value="inactive">Inactivo</option>
           </select>
         </label>
-        <section class="form-grid__wide">
+        <section v-if="!editingId" class="form-grid__wide student-admission-wizard">
+          <div class="card-headline">
+            <div>
+              <h3>Datos de inscripción del año activo</h3>
+              <p>Luego de la ficha fija puedes crear la inscripción anual en el mismo guardado.</p>
+            </div>
+          </div>
+
+          <div class="wizard-steps wizard-steps--compact">
+            <button
+              class="wizard-step"
+              :class="{ 'wizard-step--active': formStep === 'student' }"
+              type="button"
+              @click="formStep = 'student'"
+            >
+              <span>1</span>
+              Ficha
+            </button>
+            <button
+              class="wizard-step"
+              :class="{ 'wizard-step--active': formStep === 'admission' }"
+              type="button"
+              :disabled="!canOpenAdmissionStep"
+              @click="goToAdmissionStep"
+            >
+              <span>2</span>
+              Inscripción
+            </button>
+          </div>
+
+          <div v-if="formStep === 'student'" class="detail-panel">
+            <p class="detail-note">
+              Puedes guardar solo la ficha del estudiante o continuar para pedir grado, curso y acudiente antes de guardar.
+            </p>
+          </div>
+
+          <div v-else class="form-grid student-admission-grid">
+            <label>
+              Año lectivo activo
+              <input :value="academicContext.activeYearName" disabled />
+            </label>
+            <label>
+              Tipo de ingreso
+              <select v-model="admissionForm.source">
+                <option value="new_student">Alumno nuevo</option>
+                <option value="transfer">Traslado</option>
+                <option value="reentry">Reingreso</option>
+              </select>
+            </label>
+            <label>
+              Grado solicitado
+              <select v-model="admissionForm.requestedGradeId" required>
+                <option value="">Selecciona un grado</option>
+                <option v-for="grade in gradeOptions" :key="grade.id" :value="grade.id">{{ grade.name }}</option>
+              </select>
+            </label>
+            <label>
+              Curso sugerido
+              <select v-model="admissionForm.requestedGroupId">
+                <option value="">Asignar después</option>
+                <option v-for="group in admissionGroupOptions" :key="group.id" :value="group.id">{{ group.name }}</option>
+              </select>
+            </label>
+
+            <div class="form-grid__wide section-divider">
+              <strong>Acudiente principal</strong>
+            </div>
+
+            <label>
+              Nombres acudiente
+              <input v-model="admissionForm.guardian.firstName" required />
+            </label>
+            <label>
+              Apellidos acudiente
+              <input v-model="admissionForm.guardian.lastName" required />
+            </label>
+            <label>
+              Tipo documento acudiente
+              <select v-model="admissionForm.guardian.documentType" required>
+                <option v-for="option in guardianDocumentTypeOptions" :key="option.value" :value="option.value">
+                  {{ option.label }}
+                </option>
+              </select>
+            </label>
+            <label>
+              Documento acudiente
+              <input v-model="admissionForm.guardian.documentNumber" required />
+            </label>
+            <label>
+              Teléfono
+              <input v-model="admissionForm.guardian.phone" required />
+            </label>
+            <label>
+              Correo
+              <input v-model="admissionForm.guardian.email" type="email" required />
+            </label>
+            <label>
+              Parentesco
+              <select v-model="admissionForm.guardian.relationship" required>
+                <option value="madre">Madre</option>
+                <option value="padre">Padre</option>
+                <option value="abuelo">Abuelo/a</option>
+                <option value="tio">Tío/a</option>
+                <option value="acudiente">Acudiente</option>
+                <option value="otro">Otro</option>
+              </select>
+            </label>
+            <label class="form-grid__wide">
+              Observaciones
+              <textarea v-model="admissionForm.notes" placeholder="Información interna para admisiones" />
+            </label>
+          </div>
+        </section>
+
+        <section v-else class="form-grid__wide">
           <div class="card-headline">
             <div>
               <h3>Datos de inscripción del año activo</h3>
@@ -257,9 +375,30 @@
             </p>
           </div>
         </section>
-        <div class="modal-actions">
+        <p v-if="feedback" class="action-feedback form-grid__wide">{{ feedback }}</p>
+        <div v-if="!editingId && formStep === 'student'" class="modal-actions">
           <button class="button button--ghost" type="button" @click="closeModal">Cancelar</button>
-          <button class="button button--brand" type="submit">Guardar</button>
+          <button class="button button--ghost" type="button" :disabled="saving" @click="submitStudentOnly">
+            {{ saving ? 'Guardando...' : 'Guardar solo ficha' }}
+          </button>
+          <button class="button button--brand" type="button" @click="goToAdmissionStep">
+            Continuar a inscripción
+          </button>
+        </div>
+        <div v-else-if="!editingId" class="modal-actions">
+          <button class="button button--ghost" type="button" :disabled="saving" @click="formStep = 'student'">Atrás</button>
+          <button class="button button--ghost" type="button" :disabled="saving" @click="submitStudentOnly">
+            Guardar solo ficha
+          </button>
+          <button class="button button--brand" type="submit" :disabled="saving">
+            {{ saving ? 'Guardando...' : 'Guardar estudiante e inscripción' }}
+          </button>
+        </div>
+        <div v-else class="modal-actions">
+          <button class="button button--ghost" type="button" @click="closeModal">Cancelar</button>
+          <button class="button button--brand" type="submit" :disabled="saving">
+            {{ saving ? 'Guardando...' : 'Guardar' }}
+          </button>
         </div>
       </form>
     </FormModal>
@@ -289,7 +428,10 @@ import { useAcademicContextStore } from '../stores/academic-context'
 
 const listViewRef = ref<{ reload: () => Promise<void> } | null>(null)
 const isModalOpen = ref(false)
+const saving = ref(false)
+const feedback = ref('')
 const editingId = ref('')
+const formStep = ref<'student' | 'admission'>('student')
 const studentToDelete = ref<StudentDto | null>(null)
 const admissionProfile = ref<StudentAdmissionProfileDto['admission'] | null>(null)
 const admissionProfileLoading = ref(false)
@@ -331,6 +473,18 @@ const filteredGroups = computed(() =>
     ? courseOptions.value.filter((course) => course.gradeId === filters.gradeId && (!selectedAcademicYearId.value || selectedAcademicYearId.value === course.academicYearId))
     : courseOptions.value.filter((course) => !selectedAcademicYearId.value || selectedAcademicYearId.value === course.academicYearId),
 )
+const documentTypeOptions = [
+  { value: 'RC', label: 'RC - Registro civil' },
+  { value: 'TI', label: 'TI - Tarjeta de identidad' },
+  { value: 'CC', label: 'CC - Cédula de ciudadanía' },
+  { value: 'CE', label: 'CE - Cédula de extranjería' },
+  { value: 'PEP', label: 'PEP - Permiso especial de permanencia' },
+  { value: 'PPT', label: 'PPT - Permiso por protección temporal' },
+  { value: 'PAS', label: 'PAS - Pasaporte' },
+  { value: 'NES', label: 'NES - Número establecido por Secretaría' },
+]
+const studentDocumentTypeOptions = documentTypeOptions
+const guardianDocumentTypeOptions = documentTypeOptions.filter((option) => option.value !== 'RC' && option.value !== 'TI')
 
 const form = reactive({
   firstName: '',
@@ -344,7 +498,62 @@ const form = reactive({
   status: 'active',
 })
 
+const admissionForm = reactive({
+  requestedGradeId: '',
+  requestedGroupId: '',
+  source: 'new_student' as 'new_student' | 'transfer' | 'reentry',
+  notes: '',
+  guardian: {
+    firstName: '',
+    lastName: '',
+    documentType: 'CC',
+    documentNumber: '',
+    phone: '',
+    email: '',
+    relationship: 'madre',
+  },
+})
+
+const admissionGroupOptions = computed(() =>
+  admissionForm.requestedGradeId
+    ? courseOptions.value.filter((course) => course.gradeId === admissionForm.requestedGradeId && (!selectedAcademicYearId.value || course.academicYearId === selectedAcademicYearId.value))
+    : courseOptions.value.filter((course) => !selectedAcademicYearId.value || course.academicYearId === selectedAcademicYearId.value),
+)
+
+const hasStudentMinimumData = computed(() =>
+  Boolean(form.firstName.trim() && form.lastName.trim() && form.documentType && form.documentNumber.trim() && form.birthDate && form.gender),
+)
+const canOpenAdmissionStep = computed(() => Boolean(hasStudentMinimumData.value && selectedAcademicYearId.value))
+const hasAdmissionMinimumData = computed(() =>
+  Boolean(
+    selectedAcademicYearId.value &&
+    admissionForm.requestedGradeId &&
+    admissionForm.guardian.firstName.trim() &&
+    admissionForm.guardian.lastName.trim() &&
+    admissionForm.guardian.documentType &&
+    admissionForm.guardian.documentNumber.trim() &&
+    admissionForm.guardian.phone.trim() &&
+    admissionForm.guardian.email.trim(),
+  ),
+)
+
 const activeAdmission = computed(() => admissionProfile.value)
+
+const resetAdmissionForm = () => {
+  admissionForm.requestedGradeId = gradeOptions.value[0]?.id ?? ''
+  admissionForm.requestedGroupId = ''
+  admissionForm.source = 'new_student'
+  admissionForm.notes = ''
+  Object.assign(admissionForm.guardian, {
+    firstName: '',
+    lastName: '',
+    documentType: 'CC',
+    documentNumber: '',
+    phone: '',
+    email: '',
+    relationship: 'madre',
+  })
+}
 
 const resetForm = () => {
   form.firstName = ''
@@ -359,7 +568,9 @@ const resetForm = () => {
   admissionProfile.value = null
   admissionProfileLoading.value = false
   admissionProfileError.value = ''
+  formStep.value = 'student'
   editingId.value = ''
+  resetAdmissionForm()
 }
 
 const fetchStudents = async ({ page, pageSize, query }: { page: number; pageSize: number; query: string }) => {
@@ -387,6 +598,7 @@ const loadCatalogs = async () => {
 }
 
 const openCreate = () => {
+  feedback.value = ''
   resetForm()
   isModalOpen.value = true
 }
@@ -407,6 +619,7 @@ const loadAdmissionProfile = async (studentId: string) => {
 }
 
 const openEdit = async (row: Record<string, unknown>) => {
+  feedback.value = ''
   const student = row as unknown as StudentDto
   editingId.value = student.id
   form.firstName = student.firstName
@@ -436,17 +649,101 @@ const openAdmissionsModule = async () => {
   await router.push('/admissions')
 }
 
-const submitForm = async () => {
+const goToAdmissionStep = () => {
+  if (!canOpenAdmissionStep.value) {
+    feedback.value = selectedAcademicYearId.value
+      ? 'Completa nombres, apellidos, tipo y número de documento, fecha de nacimiento y género antes de continuar.'
+      : 'No hay un año lectivo activo para crear la inscripción.'
+    return
+  }
+  feedback.value = ''
+  admissionForm.requestedGradeId ||= gradeOptions.value[0]?.id ?? ''
+  formStep.value = 'admission'
+}
+
+const saveStudentOnly = async () => {
   const payload = { ...form }
 
-  if (editingId.value) {
-    await api.updateStudent(editingId.value, payload)
-  } else {
-    await api.createStudent(payload)
+  saving.value = true
+  feedback.value = ''
+  try {
+    if (editingId.value) {
+      await api.updateStudent(editingId.value, payload)
+      feedback.value = 'Estudiante actualizado correctamente.'
+    } else {
+      await api.createStudent(payload)
+      feedback.value = 'Estudiante creado correctamente.'
+    }
+
+    await listViewRef.value?.reload()
+    closeModal()
+  } catch (error) {
+    feedback.value = error instanceof Error ? error.message : 'No fue posible guardar el estudiante.'
+  } finally {
+    saving.value = false
+  }
+}
+
+const submitStudentOnly = async () => {
+  await saveStudentOnly()
+}
+
+const submitAdmissionWizard = async () => {
+  if (!selectedAcademicYearId.value) {
+    feedback.value = 'No hay un año lectivo activo para crear la inscripción.'
+    return
+  }
+  if (!hasAdmissionMinimumData.value) {
+    feedback.value = 'Completa grado solicitado y los datos obligatorios del acudiente.'
+    return
   }
 
-  await listViewRef.value?.reload()
-  closeModal()
+  saving.value = true
+  feedback.value = ''
+  try {
+    await api.createManualAdmission({
+      academicYearId: selectedAcademicYearId.value,
+      requestedGradeId: admissionForm.requestedGradeId,
+      requestedGroupId: admissionForm.requestedGroupId || null,
+      source: admissionForm.source,
+      notes: admissionForm.notes || null,
+      student: {
+        firstName: form.firstName,
+        middleName: form.middleName || null,
+        lastName: form.lastName,
+        documentType: form.documentType,
+        documentNumber: form.documentNumber,
+        birthDate: form.birthDate,
+        gender: form.gender,
+        bloodType: form.bloodType || null,
+      },
+      guardian: {
+        firstName: admissionForm.guardian.firstName,
+        lastName: admissionForm.guardian.lastName,
+        documentType: admissionForm.guardian.documentType,
+        documentNumber: admissionForm.guardian.documentNumber,
+        phone: admissionForm.guardian.phone,
+        email: admissionForm.guardian.email,
+        relationship: admissionForm.guardian.relationship,
+      },
+    })
+    await listViewRef.value?.reload()
+    feedback.value = 'Estudiante e inscripción creados correctamente.'
+    closeModal()
+  } catch (error) {
+    feedback.value = error instanceof Error ? error.message : 'No fue posible crear la inscripción.'
+  } finally {
+    saving.value = false
+  }
+}
+
+const submitForm = async () => {
+  if (!editingId.value && formStep.value === 'admission') {
+    await submitAdmissionWizard()
+    return
+  }
+
+  await saveStudentOnly()
 }
 
 const confirmDelete = async () => {
@@ -461,6 +758,15 @@ watch(
   () => {
     if (!filteredGroups.value.find((group) => group.id === filters.groupId)) {
       filters.groupId = ''
+    }
+  },
+)
+
+watch(
+  () => admissionForm.requestedGradeId,
+  () => {
+    if (!admissionGroupOptions.value.find((group) => group.id === admissionForm.requestedGroupId)) {
+      admissionForm.requestedGroupId = ''
     }
   },
 )
@@ -482,3 +788,68 @@ onMounted(async () => {
 })
 
 </script>
+
+<style scoped>
+.student-admission-wizard {
+  display: grid;
+  gap: 1rem;
+}
+
+.wizard-steps--compact {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.wizard-step {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  background: var(--surface);
+  color: var(--text-soft);
+  padding: 0.75rem 0.9rem;
+  font-weight: 700;
+  text-align: left;
+}
+
+.wizard-step span {
+  display: inline-flex;
+  width: 1.7rem;
+  height: 1.7rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: var(--surface-soft);
+  color: var(--text-soft);
+  font-size: 0.85rem;
+}
+
+.wizard-step--active {
+  border-color: rgba(124, 92, 255, 0.4);
+  background: rgba(124, 92, 255, 0.08);
+  color: var(--text);
+}
+
+.wizard-step--active span {
+  background: var(--brand-primary);
+  color: white;
+}
+
+.wizard-step:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.student-admission-grid {
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  background: var(--surface-soft);
+}
+
+.section-divider {
+  padding-top: 0.25rem;
+}
+</style>

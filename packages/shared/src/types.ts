@@ -17,6 +17,7 @@ export interface SessionUser {
   tenantId: string
   email: string
   fullName: string
+  branchId?: string | null
   roleCodes: string[]
   permissions: string[]
 }
@@ -1078,6 +1079,191 @@ export interface UserManagementDto {
   roleCodes: string[]
   roleNames: string[]
   linkedTeacherId: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface CommitteeDto {
+  id: string
+  committeeType: string
+  meetingDate: string
+  title: string
+  meetingNumber: number
+  status: string
+  academicYearName: string
+  createdAt: string
+}
+
+export interface CommitteeAttendeeDto {
+  id: string
+  fullName: string
+  role: string
+  attended: boolean
+}
+
+export interface CommitteeDecisionDto {
+  id: string
+  decisionType: string
+  description: string
+  decision: string
+  justification: string | null
+  resultScore: number | null
+  studentId: string | null
+  studentName: string | null
+  enrollmentGrade: string | null
+  enrollmentGroup: string | null
+}
+
+export interface CoexistenceCaseDto {
+  id: string
+  incidentDate: string
+  classification: string
+  category: string
+  description: string
+  status: string
+  priority: string
+  isConfidential: boolean
+  studentName: string
+  createdAt: string
+}
+
+export interface CoexistenceInvolvedPersonDto {
+  id: string
+  studentId: string | null
+  personName: string
+  role: string
+  notes: string | null
+}
+
+export interface CoexistenceInterventionDto {
+  id: string
+  interventionType: string
+  description: string
+  performedByName: string | null
+  interventionDate: string
+  followUpDate: string | null
+  outcome: string | null
+  status: string
+}
+
+export interface CoexistenceCaseDetailDto {
+  id: string
+  academicYearId: string
+  studentId: string
+  reporterName: string | null
+  incidentDate: string
+  reportedAt: string
+  classification: string
+  category: string
+  description: string
+  evidence: string | null
+  immediateActions: string | null
+  status: string
+  priority: string
+  assignedTo: string | null
+  resolvedAt: string | null
+  resolutionNotes: string | null
+  isConfidential: boolean
+  involvedPersons: CoexistenceInvolvedPersonDto[]
+  interventions: CoexistenceInterventionDto[]
+  createdAt: string
+  updatedAt: string
+}
+
+export interface PiarRecordDto {
+  id: string
+  studentFirstName: string
+  studentLastName: string
+  disabilityType: string | null
+  hasPIAR: boolean
+  status: string
+  academicYearName: string
+  createdAt: string
+}
+
+export interface PiarBarrierDto {
+  id: string
+  barrierType: string
+  description: string
+  identifiedDate: string
+  mitigated: boolean
+}
+
+export interface PiarAdjustmentDto {
+  id: string
+  adjustmentType: string
+  description: string
+  responsibleName: string | null
+  startDate: string | null
+  endDate: string | null
+  evaluationCriteria: string | null
+  status: string
+  effectiveness: string | null
+  subjectName: string | null
+}
+
+export interface PiarFollowUpDto {
+  id: string
+  followUpDate: string
+  periodId: string | null
+  progress: string
+  difficulties: string | null
+  adjustmentsStatus: string
+  recommendations: string | null
+  performedBy: string | null
+  performedByName: string | null
+  agreementsWithFamily: string | null
+}
+
+export interface PiarAnnualReportDto {
+  id: string
+  reportYear: number
+  competenciesSummary: string | null
+  progressDescription: string | null
+  transitionRecommendations: string | null
+  nextGradeId: string | null
+  nextAcademicYearId: string | null
+  status: string
+}
+
+export interface PiarRecordDetailDto {
+  record: {
+    id: string
+    academicYearId: string
+    studentId: string
+    enrollmentId: string | null
+    diagnosticInfo: string | null
+    healthConditions: string | null
+    disabilityType: string | null
+    disabilityCategory: string | null
+    hasPIAR: boolean
+    approvalDate: string | null
+    status: string
+    isConfidential: boolean
+    createdAt: string
+    updatedAt: string
+  }
+  barriers: PiarBarrierDto[]
+  adjustments: PiarAdjustmentDto[]
+  followUps: PiarFollowUpDto[]
+  reports: PiarAnnualReportDto[]
+}
+
+export interface CommitteeDetailDto {
+  id: string
+  academicYearId: string
+  committeeType: string
+  meetingDate: string
+  title: string
+  objective: string | null
+  callTo: string | null
+  development: string | null
+  conclusions: string | null
+  meetingNumber: number
+  status: string
+  approvedAt: string | null
+  attendees: CommitteeAttendeeDto[]
+  decisions: CommitteeDecisionDto[]
   createdAt: string
   updatedAt: string
 }

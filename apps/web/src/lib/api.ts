@@ -55,6 +55,12 @@ import type {
   UserManagementDto,
   NavigationMenuDto,
   NavigationAdminDto,
+  CommitteeDto,
+  CommitteeDetailDto,
+  CoexistenceCaseDto,
+  CoexistenceCaseDetailDto,
+  PiarRecordDto,
+  PiarRecordDetailDto,
 } from '@ofir/shared'
 
 const API_URL = import.meta.env.VITE_API_URL ?? 'http://127.0.0.1:8787/api'
@@ -824,4 +830,46 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
+
+  // Committees
+  getCommittees: ({ query = '', page = 1, pageSize = 10 }: { query?: string; page?: number; pageSize?: number }) =>
+    request<PaginatedResponse<CommitteeDto>>(
+      `/committees?query=${encodeURIComponent(query)}&page=${page}&pageSize=${pageSize}`,
+    ),
+  getCommittee: (id: string) =>
+    request<CommitteeDetailDto>(`/committees/${id}`),
+  createCommittee: (payload: Record<string, unknown>) =>
+    request<{ id: string; meetingNumber: number }>('/committees', { method: 'POST', body: JSON.stringify(payload) }),
+  updateCommittee: (id: string, payload: Record<string, unknown>) =>
+    request<{ id: string; status: string }>(`/committees/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
+  deleteCommittee: (id: string) =>
+    request<{ id: string }>(`/committees/${id}`, { method: 'DELETE' }),
+  createCommitteeDecision: (id: string, payload: Record<string, unknown>) =>
+    request<{ id: string }>(`/committees/${id}/decisions`, { method: 'POST', body: JSON.stringify(payload) }),
+
+  // Coexistence
+  getCoexistenceCases: ({ query = '', page = 1, pageSize = 10 }: { query?: string; page?: number; pageSize?: number }) =>
+    request<PaginatedResponse<CoexistenceCaseDto>>(
+      `/coexistence?query=${encodeURIComponent(query)}&page=${page}&pageSize=${pageSize}`,
+    ),
+  getCoexistenceCase: (id: string) =>
+    request<CoexistenceCaseDetailDto>(`/coexistence/${id}`),
+  createCoexistenceCase: (payload: Record<string, unknown>) =>
+    request<{ id: string }>('/coexistence', { method: 'POST', body: JSON.stringify(payload) }),
+  updateCoexistenceCase: (id: string, payload: Record<string, unknown>) =>
+    request<{ id: string; status: string }>(`/coexistence/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
+  createCoexistenceIntervention: (id: string, payload: Record<string, unknown>) =>
+    request<{ id: string }>(`/coexistence/${id}/interventions`, { method: 'POST', body: JSON.stringify(payload) }),
+
+  // PIAR
+  getPiarRecords: () =>
+    request<{ items: PiarRecordDto[] }>('/piar'),
+  getPiarRecord: (id: string) =>
+    request<PiarRecordDetailDto>(`/piar/${id}`),
+  createPiarRecord: (payload: Record<string, unknown>) =>
+    request<{ id: string }>('/piar', { method: 'POST', body: JSON.stringify(payload) }),
+  createPiarAdjustment: (id: string, payload: Record<string, unknown>) =>
+    request<{ id: string }>(`/piar/${id}/adjustments`, { method: 'POST', body: JSON.stringify(payload) }),
+  createPiarFollowUp: (id: string, payload: Record<string, unknown>) =>
+    request<{ id: string }>(`/piar/${id}/follow-ups`, { method: 'POST', body: JSON.stringify(payload) }),
 }

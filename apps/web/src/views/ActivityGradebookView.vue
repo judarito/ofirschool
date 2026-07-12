@@ -403,7 +403,7 @@ const goBack = () => {
     feedback.value = 'Espera a que termine la operación actual antes de salir.'
     return
   }
-  router.push('/academic/evaluation-activities')
+  router.push('/evaluation-activities')
 }
 
 onMounted(() => {

@@ -522,6 +522,17 @@ import PageHeader from '../components/PageHeader.vue'
 import StatusBadge from '../components/StatusBadge.vue'
 import SurfaceCard from '../components/SurfaceCard.vue'
 import { useAcademicContextStore } from '../stores/academic-context'
+import {
+  buildPrimaryTask,
+  buildQueueTabs,
+  formatDate,
+  formatDateTime,
+  formatFileSize,
+  listColumns,
+  primaryRowAction,
+  statusLabel,
+  statusModalTitle as getStatusModalTitle,
+} from './admissions/admissionsConfig'
 
 const activeModal = ref<'create' | 'process' | 'detail' | 'status' | 'convert' | null>(null)
 const busy = ref(false)
@@ -548,14 +559,6 @@ const filters = reactive({
   gradeId: '',
   groupId: '',
 })
-const listColumns = [
-  { key: 'studentName', label: 'Estudiante' },
-  { key: 'guardianName', label: 'Acudiente' },
-  { key: 'requestedGradeName', label: 'Grado' },
-  { key: 'requestedGroupName', label: 'Curso' },
-  { key: 'status', label: 'Estado' },
-  { key: 'submittedAt', label: 'Fecha' },
-]
 const admissionProcess = reactive<AdmissionProcessDto>({
   year: 2026,
   academicYearId: '',
@@ -635,59 +638,11 @@ const isSelectedYearActive = computed(() => admissionProcess.academicYearId === 
 const pendingReadinessItems = computed(() =>
   readinessChecklist.value.filter((item) => !item.ready).map((item) => item.label.toLowerCase()),
 )
-const queueTabs = computed(() => [
-  { value: '', label: 'Todas', count: metrics.value.total },
-  { value: 'submitted', label: 'Nuevas', count: metrics.value.submitted },
-  { value: 'reviewing', label: 'En revisión', count: metrics.value.reviewing },
-  { value: 'accepted', label: 'Aprobadas', count: metrics.value.approved - metrics.value.converted },
-  { value: 'converted', label: 'Convertidas', count: metrics.value.converted },
-  { value: 'rejected', label: 'Rechazadas', count: applications.value.filter((item) => item.status === 'rejected').length },
-])
-const primaryTask = computed(() => {
-  if (metrics.value.reviewing > 0) {
-    return {
-      title: 'Solicitudes en revisión',
-      value: `${metrics.value.reviewing} por decidir`,
-      helper: 'El siguiente paso es aprobar o rechazar las solicitudes que ya fueron validadas.',
-      description: 'La bandeja ya tiene solicitudes activas que esperan decisión académica o administrativa.',
-      actionLabel: 'Ir a revisión',
-      status: 'revision',
-    }
-  }
-  if (metrics.value.submitted > 0) {
-    return {
-      title: 'Solicitudes nuevas',
-      value: `${metrics.value.submitted} recién enviadas`,
-      helper: 'Conviene moverlas primero a revisión para que el equipo no pierda trazabilidad.',
-      description: 'Todavía hay aspirantes nuevos sin tomar en cola formal de revisión.',
-      actionLabel: 'Tomar solicitudes nuevas',
-      status: 'nuevo',
-    }
-  }
-  if (metrics.value.approved - metrics.value.converted > 0) {
-    return {
-      title: 'Conversión pendiente',
-      value: `${metrics.value.approved - metrics.value.converted} por matricular`,
-      helper: 'Ya fueron aprobadas; falta convertirlas en matrícula anual.',
-      description: 'El cuello de botella ya no está en revisar sino en cerrar la matrícula de quienes fueron aceptados.',
-      actionLabel: 'Ver aprobadas',
-      status: 'aprobado',
-    }
-  }
-  return {
-    title: 'Proceso controlado',
-    value: 'Sin urgencias visibles',
-    helper: 'Puedes revisar el proceso público o registrar manualmente nuevos aspirantes.',
-    description: 'La bandeja no tiene pendientes críticos en este momento.',
-    actionLabel: 'Ver todas',
-    status: 'aprobado',
-  }
-})
-const statusModalTitle = computed(() => {
-  if (statusActionForm.status === 'accepted') return 'Aprobar solicitud'
-  if (statusActionForm.status === 'rejected') return 'Rechazar solicitud'
-  return 'Pasar a revisión'
-})
+const queueTabs = computed(() =>
+  buildQueueTabs(metrics.value, applications.value.filter((item) => item.status === 'rejected').length),
+)
+const primaryTask = computed(() => buildPrimaryTask(metrics.value))
+const statusModalTitle = computed(() => getStatusModalTitle(statusActionForm.status))
 
 watch(
   () => newAdmission.requestedGradeId,
@@ -719,29 +674,6 @@ const metrics = computed(() => ({
   approved: applications.value.filter((item) => ['accepted', 'converted'].includes(item.status)).length,
   converted: applications.value.filter((item) => item.status === 'converted').length,
 }))
-
-const statusLabel = (status: string) => {
-  if (status === 'submitted') return 'nuevo'
-  if (status === 'reviewing') return 'revision'
-  if (status === 'accepted' || status === 'converted') return 'aprobado'
-  if (status === 'rejected') return 'rechazado'
-  return status
-}
-const primaryRowAction = (status: string) => {
-  if (status === 'submitted') return { action: 'reviewing', label: 'Tomar en revisión' }
-  if (status === 'reviewing' || status === 'rejected') return { action: 'accepted', label: 'Aprobar' }
-  if (status === 'accepted') return { action: 'convert', label: 'Matricular' }
-  return { action: 'detail', label: 'Ver detalle' }
-}
-
-const formatDate = (value: string) => new Date(value).toLocaleDateString('es-CO')
-const formatDateTime = (value: string) =>
-  new Date(value).toLocaleString('es-CO', { dateStyle: 'medium', timeStyle: 'short' })
-const formatFileSize = (value: number | null) => {
-  if (!value || value <= 0) return 'Tamaño no informado'
-  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`
-  return `${(value / (1024 * 1024)).toFixed(2)} MB`
-}
 
 const resetNewAdmission = () => {
   newAdmission.academicYearId = academicContext.activeYearId
@@ -1058,107 +990,4 @@ onMounted(async () => {
 })
 </script>
 
-<style scoped>
-.module-inline-summary {
-  display: grid;
-  grid-template-columns: minmax(0, 1.7fr) auto auto;
-  gap: 1rem;
-  align-items: center;
-}
-
-.module-inline-summary__copy {
-  display: grid;
-  gap: 0.3rem;
-}
-
-.module-inline-summary__copy p,
-.module-inline-summary__meta small {
-  color: var(--text-muted);
-}
-
-.module-inline-summary__meta {
-  display: grid;
-  gap: 0.2rem;
-  justify-items: end;
-  text-align: right;
-}
-
-.module-inline-summary__meta span {
-  font-weight: 700;
-}
-
-.module-inline-summary__actions {
-  display: flex;
-  gap: 0.65rem;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-}
-
-.admissions-toolbar {
-  display: flex;
-  justify-content: space-between;
-  gap: 0.75rem;
-  flex-wrap: wrap;
-  width: 100%;
-}
-
-.admissions-toolbar__actions {
-  display: flex;
-  gap: 0.65rem;
-  flex-wrap: wrap;
-}
-
-.admissions-queue-tabs {
-  display: flex;
-  gap: 0.55rem;
-  flex-wrap: wrap;
-}
-
-.admissions-queue-tabs .chip-button {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.45rem;
-}
-
-.admissions-queue-tabs .chip-button span {
-  display: inline-flex;
-  min-width: 22px;
-  justify-content: center;
-  font-size: 0.76rem;
-  font-weight: 700;
-  color: inherit;
-}
-
-.admissions-queue-tabs .chip-button--active {
-  background: var(--brand-primary-soft);
-  border-color: color-mix(in srgb, var(--brand-primary) 28%, var(--border));
-  color: var(--brand-primary);
-}
-
-.admissions-advanced-filters {
-  display: flex;
-  gap: 0.75rem;
-  flex-wrap: wrap;
-  width: 100%;
-  padding-top: 0.25rem;
-}
-
-.admissions-advanced-filters > * {
-  min-width: 180px;
-  flex: 1 1 180px;
-}
-
-@media (max-width: 900px) {
-  .module-inline-summary,
-  .admissions-toolbar,
-  .admissions-toolbar__actions,
-  .admissions-advanced-filters {
-    display: grid;
-  }
-
-  .module-inline-summary__meta {
-    justify-items: start;
-    text-align: left;
-  }
-}
-</style>
+<style src="./admissions/AdmissionsView.css" scoped></style>

@@ -4,6 +4,7 @@ import {
   academicPeriods,
   academicYears,
   admissionApplications,
+  consentDocuments,
   formFields,
   formSections,
   formSubmissions,
@@ -22,6 +23,7 @@ import {
 import { publicAdmissionSubmissionSchema } from '@ofir/shared'
 import { AppError } from '../lib/errors'
 import { ok } from '../lib/http'
+import { recordPublicConsents } from './consents'
 import { writeAuditLog } from '../repositories/audit.repository'
 import type { AppContextVariables, Bindings } from '../types'
 
@@ -93,6 +95,7 @@ const parsePublicSubmissionRequest = async (c: {
         admission: parseJsonField(formData, 'admission'),
         answers: parseJsonField(formData, 'answers'),
         documents: parseJsonField(formData, 'documents'),
+        consents: formData.has('consents') ? parseJsonField(formData, 'consents') : [],
       }),
       files,
     }
@@ -207,6 +210,7 @@ publicAdmissionRoutes.get('/tenants/:tenantSlug/inscriptions/:year', async (c) =
   const db = c.get('db')
   const tenantSlug = c.req.param('tenantSlug')
   const year = Number(c.req.param('year'))
+  const source = (c.req.query('source') || 'new_student') as 'new_student' | 'transfer' | 'reentry'
 
   if (!Number.isInteger(year)) {
     throw new AppError('Año lectivo invalido', 400)
@@ -442,6 +446,7 @@ publicAdmissionRoutes.get('/tenants/:tenantSlug/inscriptions/:year', async (c) =
       name: requiredDocuments.name,
       description: requiredDocuments.description,
       isRequired: requiredDocuments.isRequired,
+      applicantTypes: requiredDocuments.applicantTypes,
       acceptedMimeTypes: requiredDocuments.acceptedMimeTypes,
       maxFileSizeMb: requiredDocuments.maxFileSizeMb,
       sortOrder: requiredDocuments.sortOrder,
@@ -456,10 +461,39 @@ publicAdmissionRoutes.get('/tenants/:tenantSlug/inscriptions/:year', async (c) =
     )
     .orderBy(asc(requiredDocuments.sortOrder), asc(requiredDocuments.name))
 
+  const filteredDocuments = documents.filter(
+    (doc) => !doc.applicantTypes?.length || doc.applicantTypes.includes(source),
+  )
+
   const sectionsWithFields = sections.map((section) => ({
     ...section,
     fields: fields.filter((field) => field.sectionId === section.id).map(({ sectionId: _sectionId, ...field }) => field),
   }))
+
+  const activeConsents = await db
+    .select({
+      id: consentDocuments.id,
+      code: consentDocuments.code,
+      name: consentDocuments.name,
+      description: consentDocuments.description,
+      documentType: consentDocuments.documentType,
+      version: consentDocuments.version,
+      body: consentDocuments.body,
+    })
+    .from(consentDocuments)
+    .where(
+      and(
+        eq(consentDocuments.tenantId, tenant.id),
+        eq(consentDocuments.isActive, true),
+        eq(consentDocuments.isDeleted, false),
+      ),
+    )
+    .orderBy(asc(consentDocuments.code), desc(consentDocuments.effectiveFrom))
+
+  const latestConsentsByCode = new Map<string, (typeof activeConsents)[number]>()
+  for (const row of activeConsents) {
+    if (!latestConsentsByCode.has(row.code)) latestConsentsByCode.set(row.code, row)
+  }
 
   return c.json(
     ok('Formulario publico de inscripcion cargado', {
@@ -485,12 +519,21 @@ publicAdmissionRoutes.get('/tenants/:tenantSlug/inscriptions/:year', async (c) =
         settings: template.settings,
         schemaSnapshot: version.schemaSnapshot,
         sections: sectionsWithFields,
-        requiredDocuments: documents,
+        requiredDocuments: filteredDocuments,
       },
       catalogs: {
         grades: availableGrades,
         groups: availableGroups,
       },
+      consents: latestConsentsByCode ? [...latestConsentsByCode.values()].map((consent) => ({
+        id: consent.id,
+        code: consent.code,
+        name: consent.name,
+        description: consent.description ?? null,
+        documentType: consent.documentType,
+        version: consent.version,
+        body: consent.body,
+      })) : [],
     }),
   )
 })
@@ -701,6 +744,45 @@ publicAdmissionRoutes.post(
 
     if (missingDocuments.length) {
       throw new AppError(`Faltan documentos obligatorios: ${missingDocuments.join(', ')}`, 400)
+    }
+
+    const activeConsentRows = await db
+      .select({
+        id: consentDocuments.id,
+        code: consentDocuments.code,
+        name: consentDocuments.name,
+        documentType: consentDocuments.documentType,
+        version: consentDocuments.version,
+      })
+      .from(consentDocuments)
+      .where(
+        and(
+          eq(consentDocuments.tenantId, tenant.id),
+          eq(consentDocuments.isActive, true),
+          eq(consentDocuments.isDeleted, false),
+        ),
+      )
+      .orderBy(asc(consentDocuments.code), desc(consentDocuments.effectiveFrom))
+
+    const latestConsentByCode = new Map<string, (typeof activeConsentRows)[number]>()
+    for (const row of activeConsentRows) {
+      if (!latestConsentByCode.has(row.code)) latestConsentByCode.set(row.code, row)
+    }
+    const requiredConsents = [...latestConsentByCode.values()]
+
+    if (requiredConsents.length) {
+      const submittedConsents = new Map(payload.consents.map((consent) => [consent.documentCode, consent]))
+      const missingConsents = requiredConsents.filter((consent) => !submittedConsents.has(consent.code))
+      if (missingConsents.length) {
+        throw new AppError(
+          `Falta la aceptación de los consentimientos obligatorios: ${missingConsents.map((consent) => consent.name).join(', ')}`,
+          400,
+        )
+      }
+      const invalidConsents = payload.consents.filter((consent) => consent.accepted !== true)
+      if (invalidConsents.length) {
+        throw new AppError('Todos los consentimientos deben estar marcados como aceptados', 400)
+      }
     }
 
     configuredDocuments.forEach((document) => {
@@ -1035,6 +1117,23 @@ publicAdmissionRoutes.post(
       if (uploadedDocument) {
         cleanupState.uploadedDocumentIds.push(uploadedDocument.id)
       }
+    }
+
+    if (payload.consents.length) {
+      await recordPublicConsents({
+        db,
+        tenantId: tenant.id,
+        consents: payload.consents,
+        context: {
+          studentId: student.id,
+          guardianId: guardian.id,
+          admissionApplicationId: application.id,
+          formSubmissionId: submission.id,
+        },
+        ipAddress: c.req.header('cf-connecting-ip') ?? null,
+        userAgent: c.req.header('user-agent') ?? null,
+        fallbackActorName: `${payload.guardian.firstName} ${payload.guardian.lastName}`,
+      })
     }
 
     result = {

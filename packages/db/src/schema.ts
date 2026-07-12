@@ -13,6 +13,7 @@ import {
   uuid,
   varchar,
 } from 'drizzle-orm/pg-core'
+import { sql } from 'drizzle-orm'
 
 const auditColumns = {
   id: uuid('id').defaultRandom().primaryKey(),
@@ -136,9 +137,28 @@ export const students = pgTable('students', {
   lastName: varchar('last_name', { length: 80 }).notNull(),
   documentType: varchar('document_type', { length: 20 }).notNull(),
   documentNumber: varchar('document_number', { length: 30 }).notNull(),
+  documentExpeditionPlace: varchar('document_expedition_place', { length: 100 }),
   birthDate: date('birth_date'),
   gender: varchar('gender', { length: 20 }),
   bloodType: varchar('blood_type', { length: 10 }),
+  eps: varchar('eps', { length: 100 }),
+  sisbenLevel: varchar('sisben_level', { length: 20 }),
+  address: varchar('address', { length: 200 }),
+  city: varchar('city', { length: 100 }),
+  department: varchar('department', { length: 100 }),
+  medicalConditions: text('medical_conditions'),
+  disabilityInfo: text('disability_info'),
+  reasonableAdjustments: text('reasonable_adjustments'),
+  emergencyContacts: jsonb('emergency_contacts').$type<Array<{ name: string; phone: string; relationship: string; isAuthorizedToPickup?: boolean }>>().default([]).notNull(),
+  pickupAuthorized: jsonb('pickup_authorized').$type<Array<{ name: string; phone: string; relationship: string; isAuthorizedToPickup: boolean }>>().default([]).notNull(),
+  sensitiveDataAccess: jsonb('sensitive_data_access').$type<Record<string, unknown>>().default({}).notNull(),
+  daneInstitutionCode: varchar('dane_institution_code', { length: 30 }),
+  daneBranchCode: varchar('dane_branch_code', { length: 30 }),
+  calendar: varchar('calendar', { length: 10 }),
+  zone: varchar('zone', { length: 20 }),
+  sector: varchar('sector', { length: 20 }),
+  originInstitution: varchar('origin_institution', { length: 200 }),
+  originGrade: varchar('origin_grade', { length: 80 }),
   status: varchar('status', { length: 30 }).default('active').notNull(),
 }, (table) => [
   index('idx_students_tenant_document').on(table.tenantId, table.documentType, table.documentNumber),
@@ -152,9 +172,14 @@ export const guardians = pgTable('guardians', {
   lastName: varchar('last_name', { length: 80 }).notNull(),
   documentType: varchar('document_type', { length: 20 }).notNull(),
   documentNumber: varchar('document_number', { length: 30 }).notNull(),
+  documentExpeditionPlace: varchar('document_expedition_place', { length: 100 }),
   email: varchar('email', { length: 160 }),
   phone: varchar('phone', { length: 30 }),
   relationship: varchar('relationship', { length: 40 }).notNull(),
+  address: varchar('address', { length: 200 }),
+  city: varchar('city', { length: 100 }),
+  department: varchar('department', { length: 100 }),
+  occupation: varchar('occupation', { length: 100 }),
 }, (table) => [
   index('idx_guardians_tenant_document').on(table.tenantId, table.documentType, table.documentNumber),
   index('idx_guardians_tenant_email').on(table.tenantId, table.email),
@@ -167,8 +192,17 @@ export const studentGuardians = pgTable(
     studentId: uuid('student_id').notNull(),
     guardianId: uuid('guardian_id').notNull(),
     isPrimary: boolean('is_primary').default(false).notNull(),
+    relationshipType: varchar('relationship_type', { length: 40 }).default('academic_guardian').notNull(),
+    relationshipLabel: varchar('relationship_label', { length: 80 }),
+    isLegalRepresentative: boolean('is_legal_representative').default(false).notNull(),
+    isFinancialResponsible: boolean('is_financial_responsible').default(false).notNull(),
+    isEmergencyContact: boolean('is_emergency_contact').default(false).notNull(),
+    isPickupAuthorized: boolean('is_pickup_authorized').default(true).notNull(),
   },
-  (table) => [primaryKey({ columns: [table.id] })],
+  (table) => [
+    primaryKey({ columns: [table.id] }),
+    index('idx_student_guardians_relationship').on(table.tenantId, table.relationshipType, table.isDeleted),
+  ],
 )
 
 export const teachers = pgTable('teachers', {
@@ -443,9 +477,11 @@ export const admissionApplications = pgTable('admission_applications', {
   ...auditColumns,
   studentId: uuid('student_id').notNull(),
   academicYearId: uuid('academic_year_id').notNull(),
+  branchId: uuid('branch_id').references(() => schoolBranches.id),
   requestedGradeId: uuid('requested_grade_id').notNull(),
   requestedGroupId: uuid('requested_group_id'),
   primaryGuardianId: uuid('primary_guardian_id'),
+  assignedTo: uuid('assigned_to'),
   status: varchar('status', { length: 30 }).default('draft').notNull(),
   source: varchar('source', { length: 30 }).default('new_student').notNull(),
   applicationDate: timestamp('application_date', { withTimezone: true }).defaultNow().notNull(),
@@ -460,6 +496,17 @@ export const admissionApplications = pgTable('admission_applications', {
 }, (table) => [
   index('idx_admission_applications_tenant_year_status').on(table.tenantId, table.academicYearId, table.status, table.isDeleted),
   index('idx_admission_applications_tenant_student').on(table.tenantId, table.studentId, table.isDeleted),
+  index('idx_admission_applications_assigned_to').on(table.tenantId, table.assignedTo, table.status, table.isDeleted),
+])
+
+export const admissionComments = pgTable('admission_comments', {
+  ...auditColumns,
+  admissionApplicationId: uuid('admission_application_id').notNull().references(() => admissionApplications.id),
+  authorId: uuid('author_id'),
+  content: text('content').notNull(),
+  isInternalOnly: boolean('is_internal_only').default(true).notNull(),
+}, (table) => [
+  index('idx_admission_comments_application').on(table.tenantId, table.admissionApplicationId, table.createdAt),
 ])
 
 export const enrollments = pgTable('enrollments', {
@@ -468,11 +515,18 @@ export const enrollments = pgTable('enrollments', {
   academicYearId: uuid('academic_year_id').notNull(),
   gradeId: uuid('grade_id').notNull(),
   groupId: uuid('group_id'),
+  branchId: uuid('branch_id').references(() => schoolBranches.id),
   admissionApplicationId: uuid('admission_application_id'),
   previousEnrollmentId: uuid('previous_enrollment_id'),
   enrollmentType: varchar('enrollment_type', { length: 30 }).default('new').notNull(),
   enrollmentStatus: varchar('enrollment_status', { length: 30 }).default('draft').notNull(),
   enrollmentDate: timestamp('enrollment_date', { withTimezone: true }).defaultNow().notNull(),
+  signedAt: timestamp('signed_at', { withTimezone: true }),
+  journey: varchar('journey', { length: 40 }),
+  sequenceNumber: integer('sequence_number'),
+  documentStatus: varchar('document_status', { length: 30 }).default('pending').notNull(),
+  financialStatus: varchar('financial_status', { length: 30 }).default('pending').notNull(),
+  academicStatus: varchar('academic_status', { length: 30 }).default('pending').notNull(),
   promotionStatus: varchar('promotion_status', { length: 30 }),
   promotedFromGradeId: uuid('promoted_from_grade_id'),
   fixedData: jsonb('fixed_data').$type<Record<string, unknown>>().default({}).notNull(),
@@ -483,6 +537,7 @@ export const enrollments = pgTable('enrollments', {
   index('idx_enrollments_tenant_student_year').on(table.tenantId, table.studentId, table.academicYearId),
   index('idx_enrollments_tenant_origin').on(table.tenantId, table.enrollmentType, table.admissionApplicationId),
   uniqueIndex('uq_enrollments_tenant_student_year_active').on(table.tenantId, table.studentId, table.academicYearId, table.isDeleted),
+  uniqueIndex('uq_enrollments_tenant_year_sequence').on(table.tenantId, table.academicYearId, table.sequenceNumber).where(sql`${table.sequenceNumber} IS NOT NULL AND ${table.isDeleted} = false`),
 ])
 
 export const formTemplates = pgTable('form_templates', {
@@ -493,6 +548,8 @@ export const formTemplates = pgTable('form_templates', {
   module: varchar('module', { length: 60 }).default('enrollment').notNull(),
   entityType: varchar('entity_type', { length: 60 }).default('enrollment').notNull(),
   academicYearId: uuid('academic_year_id'),
+  gradeId: uuid('grade_id'),
+  branchId: uuid('branch_id'),
   startsOn: date('starts_on'),
   endsOn: date('ends_on'),
   status: varchar('status', { length: 30 }).default('active').notNull(),
@@ -502,6 +559,8 @@ export const formTemplates = pgTable('form_templates', {
   uniqueIndex('uq_form_templates_tenant_code_year').on(table.tenantId, table.code, table.academicYearId),
   index('idx_form_templates_tenant_module').on(table.tenantId, table.module, table.status, table.isDeleted),
   index('idx_form_templates_tenant_dates').on(table.tenantId, table.startsOn, table.endsOn, table.status, table.isDeleted),
+  index('idx_form_templates_tenant_grade').on(table.tenantId, table.gradeId, table.isDeleted),
+  index('idx_form_templates_tenant_branch').on(table.tenantId, table.branchId, table.isDeleted),
 ])
 
 export const formTemplateVersions = pgTable('form_template_versions', {
@@ -612,6 +671,7 @@ export const requiredDocuments = pgTable('required_documents', {
   name: varchar('name', { length: 160 }).notNull(),
   description: text('description'),
   isRequired: boolean('is_required').default(true).notNull(),
+  applicantTypes: jsonb('applicant_types').$type<string[]>().default([]).notNull(),
   acceptedMimeTypes: jsonb('accepted_mime_types').$type<string[]>().default([]).notNull(),
   maxFileSizeMb: integer('max_file_size_mb').default(10).notNull(),
   sortOrder: integer('sort_order').default(0).notNull(),
@@ -705,13 +765,23 @@ export const announcements = pgTable('announcements', {
 
 export const notificationLogs = pgTable('notification_logs', {
   ...auditColumns,
+  entity: varchar('entity', { length: 80 }),
+  entityId: uuid('entity_id'),
+  admissionApplicationId: uuid('admission_application_id'),
+  enrollmentId: uuid('enrollment_id'),
+  templateId: uuid('template_id'),
   channel: varchar('channel', { length: 30 }).notNull(),
   recipient: varchar('recipient', { length: 160 }).notNull(),
   template: varchar('template', { length: 80 }),
   payload: jsonb('payload').$type<Record<string, unknown>>().default({}).notNull(),
   status: varchar('status', { length: 30 }).default('queued').notNull(),
   sentAt: timestamp('sent_at', { withTimezone: true }),
-})
+  isInternal: boolean('is_internal').default(false).notNull(),
+}, (table) => [
+  index('idx_notification_logs_tenant').on(table.tenantId, table.createdAt, table.isDeleted),
+  index('idx_notification_logs_admission').on(table.tenantId, table.admissionApplicationId, table.isDeleted),
+  index('idx_notification_logs_enrollment').on(table.tenantId, table.enrollmentId, table.isDeleted),
+])
 
 export const auditLogs = pgTable('audit_logs', {
   ...auditColumns,
@@ -796,4 +866,540 @@ export const supportStrategies = pgTable('support_strategies', {
   resultScore: decimal('result_score', { precision: 5, scale: 2 }),
 }, (table) => [
   index('idx_support_strategies_lookup').on(table.tenantId, table.academicYearId, table.academicPeriodId, table.studentId, table.subjectId, table.isDeleted),
+])
+
+export const consentDocuments = pgTable('consent_documents', {
+  ...auditColumns,
+  code: varchar('code', { length: 80 }).notNull(),
+  name: varchar('name', { length: 160 }).notNull(),
+  description: text('description'),
+  documentType: varchar('document_type', { length: 40 }).notNull(),
+  version: varchar('version', { length: 40 }).notNull(),
+  body: text('body').notNull(),
+  isActive: boolean('is_active').default(true).notNull(),
+  effectiveFrom: date('effective_from'),
+  supersededBy: uuid('superseded_by'),
+}, (table) => [
+  uniqueIndex('uq_consent_documents_tenant_code_version').on(table.tenantId, table.code, table.version, table.isDeleted),
+  index('idx_consent_documents_tenant_active').on(table.tenantId, table.code, table.isActive, table.isDeleted),
+])
+
+export const consents = pgTable('consents', {
+  ...auditColumns,
+  consentDocumentId: uuid('consent_document_id').notNull().references(() => consentDocuments.id),
+  studentId: uuid('student_id').references(() => students.id),
+  guardianId: uuid('guardian_id').references(() => guardians.id),
+  admissionApplicationId: uuid('admission_application_id').references(() => admissionApplications.id),
+  enrollmentId: uuid('enrollment_id').references(() => enrollments.id),
+  formSubmissionId: uuid('form_submission_id').references(() => formSubmissions.id),
+  acceptedByName: varchar('accepted_by_name', { length: 160 }).notNull(),
+  acceptedByDocument: varchar('accepted_by_document', { length: 40 }),
+  acceptedByRelationship: varchar('accepted_by_relationship', { length: 40 }),
+  acceptedAt: timestamp('accepted_at', { withTimezone: true }).defaultNow().notNull(),
+  channel: varchar('channel', { length: 30 }).notNull(),
+  ipAddress: varchar('ip_address', { length: 60 }),
+  userAgent: text('user_agent'),
+  textSnapshot: text('text_snapshot').notNull(),
+  version: varchar('version', { length: 40 }).notNull(),
+  status: varchar('status', { length: 30 }).default('accepted').notNull(),
+  revokedAt: timestamp('revoked_at', { withTimezone: true }),
+  revokedBy: uuid('revoked_by'),
+  revocationReason: text('revocation_reason'),
+  metadata: jsonb('metadata').$type<Record<string, unknown>>().default({}).notNull(),
+}, (table) => [
+  index('idx_consents_tenant_document').on(table.tenantId, table.consentDocumentId, table.isDeleted),
+  index('idx_consents_tenant_student').on(table.tenantId, table.studentId, table.isDeleted),
+  index('idx_consents_tenant_admission').on(table.tenantId, table.admissionApplicationId, table.isDeleted),
+  index('idx_consents_tenant_enrollment').on(table.tenantId, table.enrollmentId, table.isDeleted),
+  index('idx_consents_tenant_status').on(table.tenantId, table.status, table.isDeleted),
+])
+
+export const admissionStatusHistory = pgTable('admission_status_history', {
+  ...auditColumns,
+  admissionApplicationId: uuid('admission_application_id').notNull().references(() => admissionApplications.id),
+  fromStatus: varchar('from_status', { length: 30 }),
+  toStatus: varchar('to_status', { length: 30 }).notNull(),
+  actorUserId: uuid('actor_user_id'),
+  actorRole: varchar('actor_role', { length: 40 }),
+  decisionCode: varchar('decision_code', { length: 60 }),
+  decisionLabel: varchar('decision_label', { length: 160 }),
+  isInternal: boolean('is_internal').default(true).notNull(),
+  isVisibleToFamily: boolean('is_visible_to_family').default(true).notNull(),
+  notes: text('notes'),
+  metadata: jsonb('metadata').$type<Record<string, unknown>>().default({}).notNull(),
+}, (table) => [
+  index('idx_admission_status_history_application').on(table.tenantId, table.admissionApplicationId, table.createdAt),
+  index('idx_admission_status_history_status').on(table.tenantId, table.toStatus, table.isDeleted),
+])
+
+export const admissionDecisionReasons = pgTable('admission_decision_reasons', {
+  ...auditColumns,
+  code: varchar('code', { length: 60 }).notNull(),
+  outcome: varchar('outcome', { length: 30 }).notNull(),
+  label: varchar('label', { length: 160 }).notNull(),
+  description: text('description'),
+  requiresObservation: boolean('requires_observation').default(false).notNull(),
+  isActive: boolean('is_active').default(true).notNull(),
+  sortOrder: integer('sort_order').default(0).notNull(),
+}, (table) => [
+  uniqueIndex('uq_admission_decision_reasons_tenant_code').on(table.tenantId, table.code, table.isDeleted),
+  index('idx_admission_decision_reasons_outcome').on(table.tenantId, table.outcome, table.isActive, table.isDeleted),
+])
+
+export const admissionDocumentReviews = pgTable('admission_document_reviews', {
+  ...auditColumns,
+  admissionApplicationId: uuid('admission_application_id').notNull().references(() => admissionApplications.id),
+  uploadedDocumentId: uuid('uploaded_document_id').notNull().references(() => uploadedDocuments.id),
+  status: varchar('status', { length: 30 }).notNull(),
+  reasonCode: varchar('reason_code', { length: 60 }),
+  reasonLabel: varchar('reason_label', { length: 160 }),
+  notes: text('notes'),
+  requestedCorrection: text('requested_correction'),
+  reviewedBy: uuid('reviewed_by'),
+  reviewedAt: timestamp('reviewed_at', { withTimezone: true }),
+}, (table) => [
+  uniqueIndex('uq_admission_document_reviews_document').on(table.tenantId, table.uploadedDocumentId, table.isDeleted),
+  index('idx_admission_document_reviews_application').on(table.tenantId, table.admissionApplicationId, table.isDeleted),
+  index('idx_admission_document_reviews_status').on(table.tenantId, table.status, table.isDeleted),
+])
+
+export const admissionCandidates = pgTable('admission_candidates', {
+  ...auditColumns,
+  admissionApplicationId: uuid('admission_application_id').references(() => admissionApplications.id),
+  formSubmissionId: uuid('form_submission_id').references(() => formSubmissions.id),
+  firstName: varchar('first_name', { length: 80 }).notNull(),
+  middleName: varchar('middle_name', { length: 80 }),
+  lastName: varchar('last_name', { length: 80 }).notNull(),
+  documentType: varchar('document_type', { length: 20 }).notNull(),
+  documentNumber: varchar('document_number', { length: 30 }).notNull(),
+  documentExpeditionPlace: varchar('document_expedition_place', { length: 100 }),
+  birthDate: date('birth_date'),
+  gender: varchar('gender', { length: 20 }),
+  bloodType: varchar('blood_type', { length: 10 }),
+  eps: varchar('eps', { length: 100 }),
+  sisbenLevel: varchar('sisben_level', { length: 20 }),
+  address: varchar('address', { length: 200 }),
+  city: varchar('city', { length: 100 }),
+  department: varchar('department', { length: 100 }),
+  originInstitution: varchar('origin_institution', { length: 200 }),
+  originGrade: varchar('origin_grade', { length: 80 }),
+  consolidatedStudentId: uuid('consolidated_student_id').references(() => students.id),
+  consolidatedAt: timestamp('consolidated_at', { withTimezone: true }),
+  consolidatedBy: uuid('consolidated_by'),
+  status: varchar('status', { length: 30 }).default('pending').notNull(),
+  metadata: jsonb('metadata').$type<Record<string, unknown>>().default({}).notNull(),
+}, (table) => [
+  index('idx_admission_candidates_tenant_document').on(table.tenantId, table.documentType, table.documentNumber, table.isDeleted),
+  index('idx_admission_candidates_tenant_application').on(table.tenantId, table.admissionApplicationId, table.isDeleted),
+  index('idx_admission_candidates_tenant_status').on(table.tenantId, table.status, table.isDeleted),
+])
+
+export const enrollmentNovelties = pgTable('enrollment_novelties', {
+  ...auditColumns,
+  enrollmentId: uuid('enrollment_id').notNull().references(() => enrollments.id),
+  studentId: uuid('student_id').notNull().references(() => students.id),
+  academicYearId: uuid('academic_year_id').references(() => academicYears.id),
+  noveltyType: varchar('novelty_type', { length: 30 }).notNull(),
+  effectiveDate: date('effective_date').notNull(),
+  reasonCode: varchar('reason_code', { length: 60 }),
+  reasonLabel: varchar('reason_label', { length: 160 }),
+  notes: text('notes'),
+  fromGradeId: uuid('from_grade_id').references(() => grades.id),
+  fromGroupId: uuid('from_group_id').references(() => groups.id),
+  toGradeId: uuid('to_grade_id').references(() => grades.id),
+  toGroupId: uuid('to_group_id').references(() => groups.id),
+  destinationInstitution: varchar('destination_institution', { length: 200 }),
+  documentReference: varchar('document_reference', { length: 120 }),
+  metadata: jsonb('metadata').$type<Record<string, unknown>>().default({}).notNull(),
+}, (table) => [
+  index('idx_enrollment_novelties_tenant_student').on(table.tenantId, table.studentId, table.isDeleted),
+  index('idx_enrollment_novelties_tenant_enrollment').on(table.tenantId, table.enrollmentId, table.isDeleted),
+  index('idx_enrollment_novelties_tenant_type').on(table.tenantId, table.noveltyType, table.effectiveDate, table.isDeleted),
+])
+export const communicationTemplates = pgTable('communication_templates', {
+  ...auditColumns,
+  code: varchar('code', { length: 60 }).notNull(),
+  name: varchar('name', { length: 160 }).notNull(),
+  channel: varchar('channel', { length: 30 }).default('email').notNull(),
+  subject: varchar('subject', { length: 200 }),
+  body: text('body').notNull(),
+  variables: jsonb('variables').$type<string[]>().default([]).notNull(),
+  isActive: boolean('is_active').default(true).notNull(),
+}, (table) => [
+  uniqueIndex('uq_communication_templates_tenant_code').on(table.tenantId, table.code, table.isDeleted),
+  index('idx_communication_templates_tenant_active').on(table.tenantId, table.isActive, table.isDeleted),
+])
+
+export const enrollmentDocumentAcceptance = pgTable('enrollment_document_acceptance', {
+  ...auditColumns,
+  enrollmentId: uuid('enrollment_id').notNull().references(() => enrollments.id),
+  studentId: uuid('student_id').notNull().references(() => students.id),
+  documentCode: varchar('document_code', { length: 60 }).notNull(),
+  documentName: varchar('document_name', { length: 160 }).notNull(),
+  documentVersion: varchar('document_version', { length: 40 }).notNull(),
+  textSnapshot: text('text_snapshot').notNull(),
+  acceptedByName: varchar('accepted_by_name', { length: 160 }).notNull(),
+  acceptedByRelationship: varchar('accepted_by_relationship', { length: 40 }),
+  acceptedAt: timestamp('accepted_at', { withTimezone: true }).defaultNow().notNull(),
+  channel: varchar('channel', { length: 30 }).default('admin_panel').notNull(),
+  ipAddress: varchar('ip_address', { length: 60 }),
+  metadata: jsonb('metadata').$type<Record<string, unknown>>().default({}).notNull(),
+}, (table) => [
+  uniqueIndex('uq_enrollment_document_acceptance_enrollment_document').on(table.tenantId, table.enrollmentId, table.documentCode, table.isDeleted),
+  index('idx_enrollment_document_acceptance_enrollment').on(table.tenantId, table.enrollmentId, table.isDeleted),
+])
+
+export const daneCodes = pgTable('dane_codes', {
+  ...auditColumns,
+  codeType: varchar('code_type', { length: 30 }).notNull(),
+  code: varchar('code', { length: 30 }).notNull(),
+  name: varchar('name', { length: 160 }).notNull(),
+  parentCode: varchar('parent_code', { length: 30 }),
+  isActive: boolean('is_active').default(true).notNull(),
+  metadata: jsonb('metadata').$type<Record<string, unknown>>().default({}).notNull(),
+}, (table) => [
+  uniqueIndex('uq_dane_codes_tenant_type_code').on(table.tenantId, table.codeType, table.code, table.isDeleted),
+  index('idx_dane_codes_type_parent').on(table.tenantId, table.codeType, table.parentCode, table.isActive, table.isDeleted),
+])
+
+export const documentTypeCatalog = pgTable('document_type_catalog', {
+  ...auditColumns,
+  code: varchar('code', { length: 20 }).notNull(),
+  name: varchar('name', { length: 80 }).notNull(),
+  country: varchar('country', { length: 5 }).default('CO').notNull(),
+  isNational: boolean('is_national').default(true).notNull(),
+  isActive: boolean('is_active').default(true).notNull(),
+  sortOrder: integer('sort_order').default(0).notNull(),
+}, (table) => [
+  uniqueIndex('uq_document_type_catalog_tenant_code').on(table.tenantId, table.code, table.isDeleted),
+])
+
+export const officialReports = pgTable('official_reports', {
+  ...auditColumns,
+  reportType: varchar('report_type', { length: 30 }).notNull(),
+  academicYearId: uuid('academic_year_id').references(() => academicYears.id),
+  reportDate: date('report_date').defaultNow().notNull(),
+  responsibleName: varchar('responsible_name', { length: 160 }).notNull(),
+  fileName: varchar('file_name', { length: 255 }),
+  fileKey: text('file_key'),
+  fileSizeBytes: integer('file_size_bytes'),
+  notes: text('notes'),
+  status: varchar('status', { length: 30 }).default('draft').notNull(),
+  submittedAt: timestamp('submitted_at', { withTimezone: true }),
+  metadata: jsonb('metadata').$type<Record<string, unknown>>().default({}).notNull(),
+}, (table) => [
+  index('idx_official_reports_tenant_type').on(table.tenantId, table.reportType, table.reportDate, table.isDeleted),
+  index('idx_official_reports_tenant_year').on(table.tenantId, table.academicYearId, table.isDeleted),
+])
+
+export const committeeMeetings = pgTable('committee_meetings', {
+  ...auditColumns,
+  academicYearId: uuid('academic_year_id').references(() => academicYears.id).notNull(),
+  committeeType: varchar('committee_type', { length: 40 }).notNull(),
+  meetingDate: date('meeting_date').notNull(),
+  title: varchar('title', { length: 200 }).notNull(),
+  objective: text('objective'),
+  callTo: text('call_to'),
+  development: text('development'),
+  conclusions: text('conclusions'),
+  meetingNumber: integer('meeting_number').notNull(),
+  status: varchar('status', { length: 30 }).default('draft').notNull(),
+  approvedAt: timestamp('approved_at', { withTimezone: true }),
+  approvedBy: uuid('approved_by'),
+}, (table) => [
+  index('idx_committee_meetings_tenant_year').on(table.tenantId, table.academicYearId, table.meetingDate, table.isDeleted),
+  index('idx_committee_meetings_type').on(table.tenantId, table.committeeType, table.isDeleted),
+])
+
+export const committeeAttendees = pgTable('committee_attendees', {
+  ...auditColumns,
+  committeeMeetingId: uuid('committee_meeting_id').references(() => committeeMeetings.id).notNull(),
+  userId: uuid('user_id'),
+  fullName: varchar('full_name', { length: 160 }).notNull(),
+  role: varchar('role', { length: 80 }).notNull(),
+  attended: boolean('attended').default(true).notNull(),
+  signature: text('signature'),
+}, (table) => [
+  index('idx_committee_attendees_meeting').on(table.tenantId, table.committeeMeetingId, table.isDeleted),
+])
+
+export const committeeDecisions = pgTable('committee_decisions', {
+  ...auditColumns,
+  committeeMeetingId: uuid('committee_meeting_id').references(() => committeeMeetings.id).notNull(),
+  studentId: uuid('student_id').references(() => students.id),
+  enrollmentId: uuid('enrollment_id').references(() => enrollments.id),
+  decisionType: varchar('decision_type', { length: 40 }).notNull(),
+  description: text('description').notNull(),
+  decision: varchar('decision', { length: 30 }).notNull(),
+  justification: text('justification'),
+  votedBy: jsonb('voted_by').$type<Array<{ userId: string; fullName: string; vote: string }>>().default([]).notNull(),
+  resultScore: decimal('result_score', { precision: 5, scale: 2 }),
+}, (table) => [
+  index('idx_committee_decisions_meeting').on(table.tenantId, table.committeeMeetingId, table.isDeleted),
+  index('idx_committee_decisions_student').on(table.tenantId, table.studentId, table.isDeleted),
+])
+
+export const coexistenceCases = pgTable('coexistence_cases', {
+  ...auditColumns,
+  academicYearId: uuid('academic_year_id').references(() => academicYears.id).notNull(),
+  studentId: uuid('student_id').references(() => students.id).notNull(),
+  reporterUserId: uuid('reporter_user_id'),
+  reporterName: varchar('reporter_name', { length: 160 }),
+  incidentDate: date('incident_date').notNull(),
+  reportedAt: timestamp('reported_at', { withTimezone: true }).defaultNow().notNull(),
+  classification: varchar('classification', { length: 20 }).notNull(),
+  category: varchar('category', { length: 100 }).notNull(),
+  description: text('description').notNull(),
+  evidence: text('evidence'),
+  immediateActions: text('immediate_actions'),
+  status: varchar('status', { length: 30 }).default('open').notNull(),
+  priority: varchar('priority', { length: 20 }).default('medium').notNull(),
+  assignedTo: uuid('assigned_to'),
+  resolvedAt: timestamp('resolved_at', { withTimezone: true }),
+  resolutionNotes: text('resolution_notes'),
+  isConfidential: boolean('is_confidential').default(false).notNull(),
+}, (table) => [
+  index('idx_coexistence_cases_tenant_year').on(table.tenantId, table.academicYearId, table.incidentDate, table.isDeleted),
+  index('idx_coexistence_cases_student').on(table.tenantId, table.studentId, table.isDeleted),
+  index('idx_coexistence_cases_status').on(table.tenantId, table.status, table.isDeleted),
+  index('idx_coexistence_cases_classification').on(table.tenantId, table.classification, table.isDeleted),
+])
+
+export const coexistenceInvolvedPersons = pgTable('coexistence_involved_persons', {
+  ...auditColumns,
+  coexistenceCaseId: uuid('coexistence_case_id').references(() => coexistenceCases.id).notNull(),
+  studentId: uuid('student_id').references(() => students.id),
+  personName: varchar('person_name', { length: 160 }).notNull(),
+  role: varchar('role', { length: 40 }).notNull(),
+  gradeId: uuid('grade_id'),
+  groupId: uuid('group_id'),
+  notes: text('notes'),
+}, (table) => [
+  index('idx_coexistence_involved_case').on(table.tenantId, table.coexistenceCaseId, table.isDeleted),
+  index('idx_coexistence_involved_student').on(table.tenantId, table.studentId, table.isDeleted),
+])
+
+export const coexistenceInterventions = pgTable('coexistence_interventions', {
+  ...auditColumns,
+  coexistenceCaseId: uuid('coexistence_case_id').references(() => coexistenceCases.id).notNull(),
+  interventionType: varchar('intervention_type', { length: 60 }).notNull(),
+  description: text('description').notNull(),
+  performedBy: uuid('performed_by'),
+  performedByName: varchar('performed_by_name', { length: 160 }),
+  interventionDate: date('intervention_date').notNull(),
+  followUpDate: date('follow_up_date'),
+  outcome: text('outcome'),
+  status: varchar('status', { length: 30 }).default('completed').notNull(),
+}, (table) => [
+  index('idx_coexistence_interventions_case').on(table.tenantId, table.coexistenceCaseId, table.isDeleted),
+])
+
+export const piarRecords = pgTable('piar_records', {
+  ...auditColumns,
+  academicYearId: uuid('academic_year_id').references(() => academicYears.id).notNull(),
+  studentId: uuid('student_id').references(() => students.id).notNull(),
+  enrollmentId: uuid('enrollment_id').references(() => enrollments.id),
+  diagnosticInfo: text('diagnostic_info'),
+  healthConditions: text('health_conditions'),
+  disabilityType: varchar('disability_type', { length: 100 }),
+  disabilityCategory: varchar('disability_category', { length: 60 }),
+  hasPIAR: boolean('has_piar').default(true).notNull(),
+  approvalDate: date('approval_date'),
+  reviewedBy: uuid('reviewed_by'),
+  reviewedAt: timestamp('reviewed_at', { withTimezone: true }),
+  status: varchar('status', { length: 30 }).default('active').notNull(),
+  isConfidential: boolean('is_confidential').default(true).notNull(),
+}, (table) => [
+  index('idx_piar_records_tenant_year').on(table.tenantId, table.academicYearId, table.isDeleted),
+  index('idx_piar_records_student').on(table.tenantId, table.studentId, table.isDeleted),
+])
+
+export const piarBarriers = pgTable('piar_barriers', {
+  ...auditColumns,
+  piarRecordId: uuid('piar_record_id').references(() => piarRecords.id).notNull(),
+  barrierType: varchar('barrier_type', { length: 60 }).notNull(),
+  category: varchar('category', { length: 60 }).notNull(),
+  description: text('description').notNull(),
+  severity: varchar('severity', { length: 20 }).default('moderate').notNull(),
+  subjectId: uuid('subject_id'),
+  supportsProvided: text('supports_provided'),
+  supportsNeeded: text('supports_needed'),
+}, (table) => [
+  index('idx_piar_barriers_record').on(table.tenantId, table.piarRecordId, table.isDeleted),
+])
+
+export const piarAdjustments = pgTable('piar_adjustments', {
+  ...auditColumns,
+  piarRecordId: uuid('piar_record_id').references(() => piarRecords.id).notNull(),
+  subjectId: uuid('subject_id'),
+  adjustmentType: varchar('adjustment_type', { length: 60 }).notNull(),
+  description: text('description').notNull(),
+  responsibleName: varchar('responsible_name', { length: 160 }),
+  startDate: date('start_date'),
+  endDate: date('end_date'),
+  evaluationCriteria: text('evaluation_criteria'),
+  status: varchar('status', { length: 30 }).default('active').notNull(),
+  effectiveness: varchar('effectiveness', { length: 20 }),
+}, (table) => [
+  index('idx_piar_adjustments_record').on(table.tenantId, table.piarRecordId, table.isDeleted),
+])
+
+export const piarFollowUps = pgTable('piar_follow_ups', {
+  ...auditColumns,
+  piarRecordId: uuid('piar_record_id').references(() => piarRecords.id).notNull(),
+  followUpDate: date('follow_up_date').notNull(),
+  periodId: uuid('academic_period_id'),
+  progress: text('progress').notNull(),
+  difficulties: text('difficulties'),
+  adjustmentsStatus: varchar('adjustments_status', { length: 30 }).default('ongoing').notNull(),
+  recommendations: text('recommendations'),
+  performedBy: uuid('performed_by'),
+  performedByName: varchar('performed_by_name', { length: 160 }),
+  agreementsWithFamily: text('agreements_with_family'),
+}, (table) => [
+  index('idx_piar_follow_ups_record').on(table.tenantId, table.piarRecordId, table.isDeleted),
+])
+
+export const piarAnnualReports = pgTable('piar_annual_reports', {
+  ...auditColumns,
+  piarRecordId: uuid('piar_record_id').references(() => piarRecords.id).notNull(),
+  reportYear: integer('report_year').notNull(),
+  competenciesSummary: text('competencies_summary'),
+  progressDescription: text('progress_description'),
+  transitionRecommendations: text('transition_recommendations'),
+  nextGradeId: uuid('grade_id'),
+  nextAcademicYearId: uuid('academic_year_id'),
+  submittedBy: uuid('submitted_by'),
+  submittedAt: timestamp('submitted_at', { withTimezone: true }).defaultNow().notNull(),
+  status: varchar('status', { length: 30 }).default('draft').notNull(),
+}, (table) => [
+  index('idx_piar_annual_reports_record').on(table.tenantId, table.piarRecordId, table.isDeleted),
+])
+
+export const issuedDocuments = pgTable('issued_documents', {
+  ...auditColumns,
+  documentType: varchar('document_type', { length: 40 }).notNull(),
+  academicYearId: uuid('academic_year_id').references(() => academicYears.id).notNull(),
+  studentId: uuid('student_id').references(() => students.id),
+  enrollmentId: uuid('enrollment_id').references(() => enrollments.id),
+  consecutiveNumber: integer('consecutive_number').notNull(),
+  verificationCode: varchar('verification_code', { length: 40 }).notNull(),
+  fileName: varchar('file_name', { length: 255 }),
+  fileKey: text('file_key'),
+  issuedByName: varchar('issued_by_name', { length: 160 }).notNull(),
+  issuedAt: timestamp('issued_at', { withTimezone: true }).defaultNow().notNull(),
+  validUntil: date('valid_until'),
+  metadata: jsonb('metadata').$type<Record<string, unknown>>().default({}).notNull(),
+}, (table) => [
+  uniqueIndex('uq_issued_documents_consecutive').on(table.tenantId, table.academicYearId, table.documentType, table.consecutiveNumber),
+  index('idx_issued_documents_tenant_type').on(table.tenantId, table.documentType, table.academicYearId, table.isDeleted),
+  index('idx_issued_documents_student').on(table.tenantId, table.studentId, table.isDeleted),
+  index('idx_issued_documents_verification').on(table.tenantId, table.verificationCode, table.isDeleted),
+])
+
+export const feeResolutions = pgTable('fee_resolutions', {
+  ...auditColumns,
+  academicYearId: uuid('academic_year_id').references(() => academicYears.id).notNull(),
+  resolutionNumber: varchar('resolution_number', { length: 60 }).notNull(),
+  resolutionDate: date('resolution_date').notNull(),
+  issuingEntity: varchar('issuing_entity', { length: 120 }).default('Secretaría de Educación').notNull(),
+  annualFee: decimal('annual_fee', { precision: 12, scale: 2 }).notNull(),
+  registrationFeePercentage: decimal('registration_fee_percentage', { precision: 5, scale: 2 }).default('10.00').notNull(),
+  maxInstallments: integer('max_installments').default(10).notNull(),
+  notes: text('notes'),
+  status: varchar('status', { length: 30 }).default('active').notNull(),
+  approvedBy: uuid('approved_by'),
+  approvedAt: timestamp('approved_at', { withTimezone: true }),
+}, (table) => [
+  index('idx_fee_resolutions_tenant_year').on(table.tenantId, table.academicYearId, table.isDeleted),
+])
+
+export const feeItems = pgTable('fee_items', {
+  ...auditColumns,
+  feeResolutionId: uuid('fee_resolution_id').references(() => feeResolutions.id).notNull(),
+  itemType: varchar('item_type', { length: 30 }).notNull(),
+  name: varchar('name', { length: 160 }).notNull(),
+  amount: decimal('amount', { precision: 12, scale: 2 }).notNull(),
+  dueDay: integer('due_day').default(5),
+  frequency: varchar('frequency', { length: 20 }).default('monthly').notNull(),
+  isMandatory: boolean('is_mandatory').default(true).notNull(),
+  sortOrder: integer('sort_order').default(0).notNull(),
+  description: text('description'),
+}, (table) => [
+  index('idx_fee_items_tenant_resolution').on(table.tenantId, table.feeResolutionId, table.isDeleted),
+])
+
+export const studentFeeAssignments = pgTable('student_fee_assignments', {
+  ...auditColumns,
+  enrollmentId: uuid('enrollment_id').references(() => enrollments.id).notNull(),
+  feeItemId: uuid('fee_item_id').references(() => feeItems.id).notNull(),
+  customAmount: decimal('custom_amount', { precision: 12, scale: 2 }),
+  discountPercentage: decimal('discount_percentage', { precision: 5, scale: 2 }),
+  discountReason: varchar('discount_reason', { length: 200 }),
+  isExempt: boolean('is_exempt').default(false).notNull(),
+  status: varchar('status', { length: 30 }).default('active').notNull(),
+}, (table) => [
+  index('idx_student_fee_assignments_enrollment').on(table.tenantId, table.enrollmentId, table.isDeleted),
+])
+
+export const paymentAgreements = pgTable('payment_agreements', {
+  ...auditColumns,
+  enrollmentId: uuid('enrollment_id').references(() => enrollments.id).notNull(),
+  agreementNumber: varchar('agreement_number', { length: 60 }).notNull(),
+  startDate: date('start_date').notNull(),
+  endDate: date('end_date').notNull(),
+  totalAmount: decimal('total_amount', { precision: 12, scale: 2 }).notNull(),
+  installmentCount: integer('installment_count').default(1).notNull(),
+  installmentAmount: decimal('installment_amount', { precision: 12, scale: 2 }).notNull(),
+  status: varchar('status', { length: 30 }).default('active').notNull(),
+  notes: text('notes'),
+  authorizedBy: uuid('authorized_by'),
+  authorizedAt: timestamp('authorized_at', { withTimezone: true }),
+}, (table) => [
+  index('idx_payment_agreements_tenant_enrollment').on(table.tenantId, table.enrollmentId, table.isDeleted),
+])
+
+export const financialClearances = pgTable('financial_clearances', {
+  ...auditColumns,
+  enrollmentId: uuid('enrollment_id').references(() => enrollments.id).notNull(),
+  isCleared: boolean('is_cleared').default(false).notNull(),
+  clearanceDate: timestamp('clearance_date', { withTimezone: true }),
+  clearanceType: varchar('clearance_type', { length: 30 }).default('annual').notNull(),
+  observations: text('observations'),
+  authorizedBy: uuid('authorized_by'),
+  pendingAmount: decimal('pending_amount', { precision: 12, scale: 2 }).default('0').notNull(),
+}, (table) => [
+  index('idx_financial_clearances_tenant_enrollment').on(table.tenantId, table.enrollmentId, table.isDeleted),
+])
+
+export const notificationTriggers = pgTable('notification_triggers', {
+  ...auditColumns,
+  code: varchar('code', { length: 60 }).notNull(),
+  name: varchar('name', { length: 160 }).notNull(),
+  eventType: varchar('event_type', { length: 60 }).notNull(),
+  templateCode: varchar('template_code', { length: 80 }),
+  channel: varchar('channel', { length: 30 }).default('email').notNull(),
+  recipients: varchar('recipients', { length: 40 }).default('family').notNull(),
+  isAutomatic: boolean('is_automatic').default(true).notNull(),
+  isActive: boolean('is_active').default(true).notNull(),
+  conditions: jsonb('conditions').$type<Record<string, unknown>>().default({}).notNull(),
+  delayMinutes: integer('delay_minutes').default(0),
+}, (table) => [
+  uniqueIndex('uq_notification_triggers_tenant_code').on(table.tenantId, table.code, table.isDeleted),
+  index('idx_notification_triggers_tenant_event').on(table.tenantId, table.eventType, table.isActive, table.isDeleted),
+])
+
+export const autoAlerts = pgTable('auto_alerts', {
+  ...auditColumns,
+  academicYearId: uuid('academic_year_id').references(() => academicYears.id),
+  alertType: varchar('alert_type', { length: 60 }).notNull(),
+  name: varchar('name', { length: 160 }).notNull(),
+  entityType: varchar('entity_type', { length: 40 }).notNull(),
+  dueDaysBefore: integer('due_days_before').default(7).notNull(),
+  isActive: boolean('is_active').default(true).notNull(),
+  lastRunAt: timestamp('last_run_at', { withTimezone: true }),
+  metadata: jsonb('metadata').$type<Record<string, unknown>>().default({}).notNull(),
+}, (table) => [
+  uniqueIndex('uq_auto_alerts_tenant_type').on(table.tenantId, table.alertType, table.academicYearId, table.isDeleted),
+  index('idx_auto_alerts_tenant_active').on(table.tenantId, table.isActive, table.isDeleted),
 ])

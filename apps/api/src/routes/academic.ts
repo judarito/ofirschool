@@ -2790,9 +2790,18 @@ academicRoutes.delete('/teachers/:id', requirePermission(PERMISSIONS.ACADEMIC_WR
 academicRoutes.get('/course-subjects', requirePermission(PERMISSIONS.ACADEMIC_READ), async (c) => {
   const db = c.get('db')
   const tenantId = c.get('tenantId')
+  const user = c.get('user')
   const academicYearId = c.req.query('academicYearId')
   const groupId = c.req.query('groupId')
-  const teacherId = c.req.query('teacherId')
+  let teacherId = c.req.query('teacherId')
+
+  if (user.roleCodes.includes('teacher')) {
+    const teacherRecord = await db.query.teachers.findFirst({
+      where: and(eq(teachers.tenantId, tenantId), eq(teachers.userId, user.id), eq(teachers.isDeleted, false)),
+    })
+    if (!teacherRecord) throw new AppError('Usuario no está registrado como docente activo', 403)
+    teacherId = teacherRecord.id
+  }
   
   const conditions = [
     eq(courseSubjects.tenantId, tenantId),
@@ -3534,12 +3543,21 @@ academicRoutes.delete('/group-journey-options/:id', requirePermission(PERMISSION
 academicRoutes.get('/timetable', requirePermission(PERMISSIONS.ACADEMIC_READ), async (c) => {
   const db = c.get('db')
   const tenantId = c.get('tenantId')
+  const user = c.get('user')
   const academicYearId = c.req.query('academicYearId')
   const groupId = c.req.query('groupId')
   const journeyId = c.req.query('journeyId')
-  const teacherId = c.req.query('teacherId')
+  let teacherId = c.req.query('teacherId')
 
   if (!academicYearId) throw new AppError('Debes indicar el año lectivo.', 400)
+
+  if (user.roleCodes.includes('teacher')) {
+    const teacherRecord = await db.query.teachers.findFirst({
+      where: and(eq(teachers.tenantId, tenantId), eq(teachers.userId, user.id), eq(teachers.isDeleted, false)),
+    })
+    if (!teacherRecord) throw new AppError('Usuario no está registrado como docente activo', 403)
+    teacherId = teacherRecord.id
+  }
 
   const conditions = [
     eq(groupTimetableEntries.tenantId, tenantId),

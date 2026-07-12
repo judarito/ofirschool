@@ -406,6 +406,15 @@ import PageHeader from '../components/PageHeader.vue'
 import SurfaceCard from '../components/SurfaceCard.vue'
 import { api } from '../lib/api'
 import { useAcademicContextStore } from '../stores/academic-context'
+import {
+  formatDateTime,
+  formatScore,
+  translateObservationType,
+  translatePeriodStatus,
+  translatePromotionStatus,
+  translateSupportStatus,
+  workspaceModes,
+} from './report-cards/reportCardsConfig'
 
 const academicContext = useAcademicContextStore()
 const loading = ref(false)
@@ -427,12 +436,6 @@ const filters = reactive({
   groupId: '',
   studentId: '',
 })
-
-const workspaceModes = [
-  { value: 'individual' as const, label: 'Boletin individual', helper: 'Para generar un estudiante puntual.' },
-  { value: 'course' as const, label: 'Boletines del curso', helper: 'Para recorrer el grupo sin rearmar filtros.' },
-  { value: 'ready' as const, label: 'Listos para imprimir', helper: 'Para trabajar solo la cola del corte actual.' },
-]
 
 const filteredPeriods = computed(() => periods.value.filter((period) => period.academicYearId === filters.academicYearId))
 const filteredCourses = computed(() => courses.value.filter((course) => course.academicYearId === filters.academicYearId))
@@ -715,41 +718,6 @@ const runPrimaryAction = async () => {
   await focusQueue()
 }
 
-const formatScore = (value: number, decimalPlaces = 2) => value.toFixed(decimalPlaces)
-
-const formatDateTime = (value: string) =>
-  new Intl.DateTimeFormat('es-CO', {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  }).format(new Date(value))
-
-const translateObservationType = (value: string) => {
-  if (value === 'strength') return 'Fortaleza'
-  if (value === 'difficulty') return 'Dificultad'
-  if (value === 'recommendation') return 'Recomendacion'
-  if (value === 'recovery_plan') return 'Plan de recuperacion'
-  return 'General'
-}
-
-const translateSupportStatus = (value: string) => {
-  if (value === 'approved') return 'Recuperado'
-  if (value === 'rejected') return 'No recuperado'
-  return 'Pendiente'
-}
-
-const translatePeriodStatus = (value: string) => {
-  if (value === 'closed') return 'cerrado'
-  if (value === 'published') return 'publicado'
-  return 'abierto'
-}
-
-const translatePromotionStatus = (value?: string | null) => {
-  if (value === 'promoted') return 'Promovido'
-  if (value === 'conditional') return 'Condicional'
-  if (value === 'not_promoted') return 'No promovido'
-  return 'Pendiente'
-}
-
 watch(() => [filters.academicYearId, filters.groupId], loadStudents)
 watch(() => filters.academicYearId, () => {
   filters.academicPeriodId = pickDefaultPeriodId(filters.academicYearId)
@@ -784,190 +752,4 @@ watch(queueStudents, (students) => {
 onMounted(loadCatalogs)
 </script>
 
-<style scoped>
-.report-cards-workboard,
-.report-cards-queue {
-  align-items: stretch;
-}
-
-.report-cards-focus-card,
-.report-cards-context-card,
-.report-cards-queue-card {
-  display: grid;
-  gap: 1rem;
-}
-
-.report-cards-toolbar {
-  display: grid;
-  gap: 1rem;
-  margin-bottom: 1rem;
-}
-
-.report-cards-modes {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 0.75rem;
-}
-
-.report-cards-mode {
-  border: 1px solid var(--border-color);
-  border-radius: 1rem;
-  background: transparent;
-  display: grid;
-  gap: 0.25rem;
-  padding: 0.9rem 1rem;
-  text-align: left;
-}
-
-.report-cards-mode strong {
-  font-size: 0.95rem;
-}
-
-.report-cards-mode span {
-  color: var(--muted-foreground, #667085);
-  font-size: 0.82rem;
-  line-height: 1.35;
-}
-
-.report-cards-mode--active {
-  background: color-mix(in srgb, var(--brand, #0f766e) 12%, white);
-  border-color: color-mix(in srgb, var(--brand, #0f766e) 34%, var(--border-color));
-}
-
-.report-cards-student-list {
-  display: grid;
-  gap: 0.65rem;
-  max-height: 28rem;
-  overflow: auto;
-}
-
-.report-cards-student-item {
-  align-items: center;
-  background: color-mix(in srgb, var(--surface-2, #f8fafc) 94%, white);
-  border: 1px solid transparent;
-  border-radius: 0.9rem;
-  display: flex;
-  gap: 1rem;
-  justify-content: space-between;
-  padding: 0.85rem 0.95rem;
-  text-align: left;
-}
-
-.report-cards-student-item strong,
-.report-cards-student-item span,
-.report-cards-student-item small {
-  display: block;
-}
-
-.report-cards-student-item span,
-.report-cards-student-item small {
-  color: var(--muted-foreground, #667085);
-}
-
-.report-cards-student-item--active {
-  border-color: color-mix(in srgb, var(--brand, #0f766e) 34%, var(--border-color));
-  background: color-mix(in srgb, var(--brand, #0f766e) 10%, white);
-}
-
-.report-card {
-  gap: 1.25rem;
-}
-
-.report-card__header {
-  display: flex;
-  justify-content: space-between;
-  gap: 1rem;
-  flex-wrap: wrap;
-}
-
-.report-card__header h2 {
-  margin: 0.15rem 0;
-}
-
-.report-card__eyebrow {
-  margin: 0;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  font-size: 0.72rem;
-  color: var(--muted-foreground, #667085);
-}
-
-.report-card__meta {
-  display: grid;
-  gap: 0.35rem;
-  color: var(--muted-foreground, #667085);
-  font-size: 0.92rem;
-}
-
-.report-card__summary {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 0.9rem;
-}
-
-.report-card__summary article {
-  padding: 1rem;
-  border-radius: 1rem;
-  background: color-mix(in srgb, var(--surface-2, #f8fafc) 92%, white);
-  display: grid;
-  gap: 0.35rem;
-}
-
-.report-card__summary span,
-.report-card__summary small,
-.table-note,
-.tracking-empty {
-  color: var(--muted-foreground, #667085);
-}
-
-.report-card__summary strong {
-  font-size: 1.35rem;
-}
-
-.table-note {
-  display: block;
-  margin-top: 0.25rem;
-  font-size: 0.8rem;
-}
-
-.subject-tracking {
-  display: grid;
-  gap: 0.4rem;
-}
-
-.tracking-chip {
-  padding: 0.5rem 0.65rem;
-  border-radius: 0.75rem;
-  background: color-mix(in srgb, var(--surface-2, #f8fafc) 94%, white);
-  font-size: 0.84rem;
-  line-height: 1.35;
-}
-
-.tracking-chip--support {
-  background: color-mix(in srgb, #ecfdf3 92%, white);
-}
-
-.report-card__footer {
-  margin: 0;
-  color: var(--muted-foreground, #667085);
-  font-size: 0.85rem;
-}
-
-@media print {
-  .button,
-  .action-feedback,
-  .page-header__actions,
-  .stack > :first-child,
-  .stack > :nth-child(2),
-  .stack > :nth-child(3),
-  .stack > :nth-child(4) {
-    display: none !important;
-  }
-
-  .report-card {
-    box-shadow: none;
-    border: none;
-    padding: 0;
-  }
-}
-</style>
+<style src="./report-cards/ReportCardsView.css" scoped></style>

@@ -1,0 +1,102 @@
+.module-inline-summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1.7fr) auto auto;
+  gap: 1rem;
+  align-items: center;
+}
+
+.module-inline-summary__copy {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.module-inline-summary__copy p,
+.module-inline-summary__meta small {
+  color: var(--text-muted);
+}
+
+.module-inline-summary__meta {
+  display: grid;
+  gap: 0.2rem;
+  justify-items: end;
+  text-align: right;
+}
+
+.module-inline-summary__meta span {
+  font-weight: 700;
+}
+
+.module-inline-summary__actions {
+  display: flex;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.admissions-toolbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  width: 100%;
+}
+
+.admissions-toolbar__actions {
+  display: flex;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+}
+
+.admissions-queue-tabs {
+  display: flex;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+}
+
+.admissions-queue-tabs .chip-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.admissions-queue-tabs .chip-button span {
+  display: inline-flex;
+  min-width: 22px;
+  justify-content: center;
+  font-size: 0.76rem;
+  font-weight: 700;
+  color: inherit;
+}
+
+.admissions-queue-tabs .chip-button--active {
+  background: var(--brand-primary-soft);
+  border-color: color-mix(in srgb, var(--brand-primary) 28%, var(--border));
+  color: var(--brand-primary);
+}
+
+.admissions-advanced-filters {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  width: 100%;
+  padding-top: 0.25rem;
+}
+
+.admissions-advanced-filters > * {
+  min-width: 180px;
+  flex: 1 1 180px;
+}
+
+@media (max-width: 900px) {
+  .module-inline-summary,
+  .admissions-toolbar,
+  .admissions-toolbar__actions,
+  .admissions-advanced-filters {
+    display: grid;
+  }
+
+  .module-inline-summary__meta {
+    justify-items: start;
+    text-align: left;
+  }
+}
