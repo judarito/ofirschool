@@ -103,19 +103,45 @@
       </template>
     </ListView>
 
-    <FormModal :open="activeModal === 'create'" title="Crear matrícula" @close="closeModal">
+    <FormModal :open="activeModal === 'create'" title="Crear matrícula" size="full" @close="closeModal">
       <form class="form-grid" @submit.prevent="createEnrollment">
-        <label>
-          Estudiante
-          <select v-model="newEnrollment.studentId" :disabled="busy || !enrollmentCandidates.length">
-            <option value="">
-              {{ enrollmentCandidates.length ? 'Selecciona un estudiante' : 'No hay estudiantes disponibles para matricular' }}
-            </option>
-            <option v-for="candidate in enrollmentCandidates" :key="candidate.studentId" :value="candidate.studentId">
-              {{ candidate.studentName }} · {{ candidate.studentDocument }}
-            </option>
-          </select>
-        </label>
+        <div class="form-grid__wide">
+          <label>
+            Estudiante
+            <PaginatedCombobox
+              v-model="newEnrollment.studentId"
+              v-model:search="candidateSearch"
+              :selected-label="selectedCandidateLabel"
+              placeholder="Selecciona un estudiante"
+              search-placeholder="Buscar por nombre o identificación"
+              :items="enrollmentCandidates"
+              :total="candidateTotal"
+              :page="candidatePage"
+              :page-size="candidatePageSize"
+              :disabled="busy"
+              :get-item-key="candidateKey"
+              :get-item-label="candidateLabel"
+              no-results-text="No hay estudiantes disponibles para matricular."
+              @page-change="goToCandidatePage"
+              @select="selectCandidate"
+            >
+              <template #option="{ item }">
+                <span class="candidate-option__body">
+                  <span>
+                    <strong>{{ (item as EnrollmentCandidateDto).studentName }}</strong>
+                    <small>{{ (item as EnrollmentCandidateDto).studentDocument }}</small>
+                  </span>
+                  <small v-if="(item as EnrollmentCandidateDto).admissionApplication">
+                    Inscripción {{ statusLabel((item as EnrollmentCandidateDto).admissionApplication?.status || '') }}
+                  </small>
+                  <small v-else-if="(item as EnrollmentCandidateDto).latestEnrollment">
+                    Última matrícula {{ (item as EnrollmentCandidateDto).latestEnrollment?.academicYearName }}
+                  </small>
+                </span>
+              </template>
+            </PaginatedCombobox>
+          </label>
+        </div>
         <p v-if="!enrollmentCandidates.length" class="form-note form-grid__wide">
           No encontramos estudiantes elegibles para el año lectivo activo. Revisa que existan estudiantes sin matrícula en este año o cambia el año lectivo en la barra superior.
         </p>
@@ -126,6 +152,7 @@
         <label>
           Grado
           <select v-model="newEnrollment.gradeId">
+            <option value="">Selecciona un grado</option>
             <option v-for="grade in gradeOptions" :key="grade.id" :value="grade.id">{{ grade.name }}</option>
           </select>
         </label>
@@ -139,6 +166,7 @@
         <label>
           Origen
           <select v-model="newEnrollment.enrollmentType">
+            <option value="">Selecciona el origen</option>
             <option value="new">Nuevo ingreso directo</option>
             <option value="renewal">Renovación</option>
             <option value="promotion">Promoción</option>
@@ -158,6 +186,11 @@
             </option>
           </select>
         </label>
+        <p v-if="selectedCandidate?.admissionApplication" class="form-note form-grid__wide">
+          Inscripción asociada: {{ statusLabel(selectedCandidate.admissionApplication.status) }} ·
+          Grado solicitado: {{ selectedCandidate.admissionApplication.requestedGradeName || 'Sin grado' }} ·
+          Curso: {{ selectedCandidate.admissionApplication.requestedGroupName || 'Por asignar' }}
+        </p>
         <label>
           Estado de matrícula
           <select v-model="newEnrollment.enrollmentStatus">
@@ -177,6 +210,17 @@
         </div>
       </form>
     </FormModal>
+
+    <ConfirmDialog
+      :open="showAdmissionApprovalDialog"
+      title="Aprobar inscripción y matricular"
+      :description="admissionApprovalMessage"
+      confirm-label="Aprobar y matricular"
+      cancel-label="No continuar"
+      variant="brand"
+      @cancel="cancelAdmissionApproval"
+      @confirm="confirmAdmissionApproval"
+    />
 
     <FormModal :open="activeModal === 'continuity'" title="Continuidad masiva" size="full" presentation="drawer" @close="closeModal">
       <div class="stack">
@@ -433,9 +477,11 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import type { AcademicGradeDto, AnnualPromotionPreviewDto, CourseDto, EnrollmentCandidateDto, EnrollmentContinuityPreviewDto, EnrollmentDto } from '@ofir/shared'
 import { api } from '../lib/api'
+import ConfirmDialog from '../components/ConfirmDialog.vue'
 import FormModal from '../components/FormModal.vue'
 import ListView from '../components/ListView.vue'
 import PageHeader from '../components/PageHeader.vue'
+import PaginatedCombobox from '../components/PaginatedCombobox.vue'
 import StatusBadge from '../components/StatusBadge.vue'
 import SurfaceCard from '../components/SurfaceCard.vue'
 import { useAcademicContextStore } from '../stores/academic-context'
@@ -449,6 +495,12 @@ const viewMode = ref<'overview' | 'create' | 'continuity' | 'annual-close'>('ove
 const gradeOptions = ref<AcademicGradeDto[]>([])
 const courseOptions = ref<CourseDto[]>([])
 const enrollmentCandidates = ref<EnrollmentCandidateDto[]>([])
+const selectedEnrollmentCandidate = ref<EnrollmentCandidateDto | null>(null)
+const candidateSearch = ref('')
+const candidatePage = ref(1)
+const candidatePageSize = 8
+const candidateTotal = ref(0)
+const showAdmissionApprovalDialog = ref(false)
 const enrollments = ref<EnrollmentDto[]>([])
 const continuityPreview = ref<EnrollmentContinuityPreviewDto | null>(null)
 const annualPromotionPreview = ref<AnnualPromotionPreviewDto | null>(null)
@@ -468,7 +520,7 @@ const newEnrollment = reactive({
   academicYearId: '',
   gradeId: '',
   groupId: '',
-  enrollmentType: 'new',
+  enrollmentType: '',
   enrollmentStatus: 'draft',
   enrollmentDate: new Date().toISOString().slice(0, 10),
   previousEnrollmentId: '',
@@ -501,10 +553,20 @@ const filteredCourseOptions = computed(() =>
 )
 
 const selectedCandidate = computed(
-  () => enrollmentCandidates.value.find((candidate) => candidate.studentId === newEnrollment.studentId) ?? null,
+  () => selectedEnrollmentCandidate.value,
 )
+const selectedCandidateLabel = computed(() =>
+  selectedCandidate.value ? `${selectedCandidate.value.studentName} · ${selectedCandidate.value.studentDocument}` : '',
+)
+const admissionApprovalMessage = computed(() => {
+  const admission = selectedCandidate.value?.admissionApplication
+  const studentName = selectedCandidate.value?.studentName ?? 'este estudiante'
+  const status = admission ? statusLabel(admission.status) : 'sin aprobar'
+  return `La inscripción de ${studentName} está en estado "${status}". Para crear la matrícula debes aprobarla. Si continúas, el sistema aprobará la inscripción y creará la matrícula.`
+})
+const candidateTotalPages = computed(() => Math.max(Math.ceil(candidateTotal.value / candidatePageSize), 1))
 const canCreateEnrollment = computed(() =>
-  Boolean(newEnrollment.studentId && newEnrollment.academicYearId && newEnrollment.gradeId && newEnrollment.enrollmentDate),
+  Boolean(newEnrollment.studentId && newEnrollment.academicYearId && newEnrollment.gradeId && newEnrollment.enrollmentType && newEnrollment.enrollmentDate),
 )
 const continuityPendingCount = computed(() => continuityPreview.value?.eligibleCandidates ?? 0)
 const continuityTitle = computed(() => {
@@ -539,6 +601,7 @@ const overbookedContinuityGroupIds = computed(() => {
   return blocked
 })
 const hasOverbookedContinuitySelection = computed(() => overbookedContinuityGroupIds.value.size > 0)
+const approvedAdmissionStatuses = new Set(['accepted', 'converted'])
 const annualDecisionItems = computed(() =>
   annualPromotionPreview.value
     ? annualPromotionPreview.value.items.map((item) => ({
@@ -606,14 +669,17 @@ const primaryWorkflow = computed(() => {
   }
 })
 const resetForm = () => {
-  newEnrollment.studentId = enrollmentCandidates.value[0]?.studentId ?? ''
+  newEnrollment.studentId = ''
   newEnrollment.academicYearId = academicContext.activeYearId
-  newEnrollment.gradeId = gradeOptions.value[0]?.id ?? ''
+  newEnrollment.gradeId = ''
   newEnrollment.groupId = ''
-  newEnrollment.enrollmentType = 'new'
+  newEnrollment.enrollmentType = ''
   newEnrollment.enrollmentStatus = 'draft'
   newEnrollment.enrollmentDate = new Date().toISOString().slice(0, 10)
   newEnrollment.previousEnrollmentId = ''
+  selectedEnrollmentCandidate.value = null
+  candidateSearch.value = ''
+  candidatePage.value = 1
 }
 
 const setViewMode = (mode: 'overview' | 'create' | 'continuity' | 'annual-close') => {
@@ -634,15 +700,55 @@ const requireSelectedYearNumber = () => {
 }
 
 const loadCatalogs = async () => {
-  const year = requireSelectedYearNumber()
-  const [gradesResponse, coursesResponse, candidatesResponse] = await Promise.all([
+  const [gradesResponse, coursesResponse] = await Promise.all([
     api.getAcademicGrades({ page: 1, pageSize: 100 }),
     api.getCourses({ page: 1, pageSize: 100 }),
-    api.getEnrollmentCandidates({ year, page: 1, pageSize: 100 }),
   ])
   gradeOptions.value = gradesResponse.data.items
   courseOptions.value = coursesResponse.data.items
+  await loadEnrollmentCandidates()
+}
+
+const loadEnrollmentCandidates = async () => {
+  const year = requireSelectedYearNumber()
+  const candidatesResponse = await api.getEnrollmentCandidates({
+    year,
+    query: candidateSearch.value,
+    page: candidatePage.value,
+    pageSize: candidatePageSize,
+  })
   enrollmentCandidates.value = candidatesResponse.data.items
+  candidateTotal.value = candidatesResponse.data.total
+}
+
+const goToCandidatePage = async (page: number) => {
+  candidatePage.value = Math.min(Math.max(page, 1), candidateTotalPages.value)
+  await loadEnrollmentCandidates()
+}
+
+const candidateKey = (item: unknown) => (item as EnrollmentCandidateDto).studentId
+const candidateLabel = (item: unknown) => {
+  const candidate = item as EnrollmentCandidateDto
+  return `${candidate.studentName} · ${candidate.studentDocument}`
+}
+
+const selectCandidate = (item: unknown) => {
+  const candidate = item as EnrollmentCandidateDto
+  selectedEnrollmentCandidate.value = candidate
+  newEnrollment.studentId = candidate.studentId
+
+  if (candidate.admissionApplication) {
+    newEnrollment.gradeId = candidate.admissionApplication.requestedGradeId
+    newEnrollment.groupId = candidate.admissionApplication.requestedGroupId ?? ''
+  } else {
+    newEnrollment.gradeId = ''
+    newEnrollment.groupId = ''
+  }
+
+  newEnrollment.previousEnrollmentId =
+    newEnrollment.enrollmentType && newEnrollment.enrollmentType !== 'new' && candidate.latestEnrollment
+      ? candidate.latestEnrollment.id
+      : ''
 }
 
 const loadContinuityPreview = async () => {
@@ -715,14 +821,15 @@ const reload = async () => {
 
 const closeModal = () => {
   activeModal.value = null
+  showAdmissionApprovalDialog.value = false
 }
 
 const openCreate = async () => {
   viewMode.value = 'create'
   busy.value = true
   try {
-    await loadCatalogs()
     resetForm()
+    await loadCatalogs()
     activeModal.value = 'create'
   } catch (caught) {
     feedback.value = caught instanceof Error ? caught.message : 'No pudimos cargar los estudiantes disponibles para matrícula.'
@@ -767,10 +874,23 @@ const runPrimaryWorkflowAction = () => {
 
 const createEnrollment = async () => {
   if (!canCreateEnrollment.value) {
-    feedback.value = 'Selecciona estudiante, año lectivo y grado antes de guardar la matrícula.'
+    feedback.value = 'Selecciona estudiante, año lectivo, grado, origen y fecha antes de guardar la matrícula.'
     return
   }
 
+  const admissionApplication = selectedCandidate.value?.admissionApplication ?? null
+  const approveAdmissionIfNeeded = Boolean(admissionApplication && !approvedAdmissionStatuses.has(admissionApplication.status))
+
+  if (approveAdmissionIfNeeded) {
+    showAdmissionApprovalDialog.value = true
+    return
+  }
+
+  await submitEnrollment(false)
+}
+
+const submitEnrollment = async (approveAdmissionIfNeeded: boolean) => {
+  const admissionApplication = selectedCandidate.value?.admissionApplication ?? null
   busy.value = true
   try {
     await api.createEnrollment({
@@ -778,6 +898,8 @@ const createEnrollment = async () => {
       academicYearId: newEnrollment.academicYearId,
       gradeId: newEnrollment.gradeId,
       groupId: newEnrollment.groupId || null,
+      admissionApplicationId: admissionApplication?.id ?? null,
+      approveAdmissionIfNeeded,
       enrollmentType: newEnrollment.enrollmentType,
       enrollmentStatus: newEnrollment.enrollmentStatus,
       enrollmentDate: newEnrollment.enrollmentDate,
@@ -789,6 +911,16 @@ const createEnrollment = async () => {
   } finally {
     busy.value = false
   }
+}
+
+const cancelAdmissionApproval = () => {
+  showAdmissionApprovalDialog.value = false
+  feedback.value = 'Matrícula cancelada. La inscripción no fue modificada.'
+}
+
+const confirmAdmissionApproval = async () => {
+  showAdmissionApprovalDialog.value = false
+  await submitEnrollment(true)
 }
 
 const exportEnrollments = () => {
@@ -877,25 +1009,7 @@ watch(
   (candidate) => {
     if (!candidate) {
       newEnrollment.previousEnrollmentId = ''
-      newEnrollment.enrollmentType = 'new'
       return
-    }
-
-    const latest = candidate.latestEnrollment
-    if (!latest) {
-      newEnrollment.previousEnrollmentId = ''
-      if (newEnrollment.enrollmentType !== 'transfer') {
-        newEnrollment.enrollmentType = 'new'
-      }
-      return
-    }
-
-    newEnrollment.previousEnrollmentId = latest.id
-    if (newEnrollment.enrollmentType === 'new' || !newEnrollment.enrollmentType) {
-      newEnrollment.enrollmentType = candidate.recommendedEnrollmentType
-    }
-    if (!newEnrollment.gradeId) {
-      newEnrollment.gradeId = latest.gradeId
     }
   },
   { immediate: true },
@@ -914,6 +1028,16 @@ watch(
     }
   },
 )
+
+let candidateSearchTimer: ReturnType<typeof setTimeout> | null = null
+watch(candidateSearch, () => {
+  if (activeModal.value !== 'create') return
+  if (candidateSearchTimer) clearTimeout(candidateSearchTimer)
+  candidateSearchTimer = setTimeout(() => {
+    candidatePage.value = 1
+    void loadEnrollmentCandidates()
+  }, 250)
+})
 
 watch(
   () => filters.gradeId,

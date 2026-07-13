@@ -549,13 +549,60 @@ enrollmentRoutes.get('/candidates', requirePermission(PERMISSIONS.ACADEMIC_READ)
     }
   })
 
+  const admissionRows = studentIds.length
+    ? await db
+        .select({
+          id: admissionApplications.id,
+          studentId: admissionApplications.studentId,
+          status: admissionApplications.status,
+          requestedGradeId: admissionApplications.requestedGradeId,
+          requestedGradeName: grades.name,
+          requestedGroupId: admissionApplications.requestedGroupId,
+          requestedGroupName: groups.name,
+          source: admissionApplications.source,
+          submittedAt: admissionApplications.submittedAt,
+          createdAt: admissionApplications.createdAt,
+        })
+        .from(admissionApplications)
+        .leftJoin(grades, eq(grades.id, admissionApplications.requestedGradeId))
+        .leftJoin(groups, eq(groups.id, admissionApplications.requestedGroupId))
+        .where(
+          and(
+            eq(admissionApplications.tenantId, tenantId),
+            eq(admissionApplications.academicYearId, targetYear.id),
+            eq(admissionApplications.isDeleted, false),
+            inArray(admissionApplications.studentId, studentIds),
+          ),
+        )
+        .orderBy(desc(admissionApplications.submittedAt), desc(admissionApplications.createdAt))
+    : []
+
+  const admissionByStudent = new Map<string, typeof admissionRows[number]>()
+  admissionRows.forEach((row) => {
+    if (!admissionByStudent.has(row.studentId)) {
+      admissionByStudent.set(row.studentId, row)
+    }
+  })
+
   return c.json(ok('Candidatos a matrícula cargados', {
     items: rows.map((row) => {
       const latestEnrollment = latestEnrollmentByStudent.get(row.id)
+      const admissionApplication = admissionByStudent.get(row.id)
       return {
         studentId: row.id,
         studentName: [row.firstName, row.middleName, row.lastName].filter(Boolean).join(' '),
         studentDocument: `${row.documentType} ${row.documentNumber}`.trim(),
+        admissionApplication: admissionApplication
+          ? {
+              id: admissionApplication.id,
+              status: admissionApplication.status,
+              requestedGradeId: admissionApplication.requestedGradeId,
+              requestedGradeName: admissionApplication.requestedGradeName ?? '',
+              requestedGroupId: admissionApplication.requestedGroupId,
+              requestedGroupName: admissionApplication.requestedGroupName ?? null,
+              source: admissionApplication.source,
+            }
+          : null,
         latestEnrollment: latestEnrollment
           ? {
               id: latestEnrollment.enrollmentId,
@@ -842,6 +889,8 @@ enrollmentRoutes.post('/', requirePermission(PERMISSIONS.ACADEMIC_WRITE), zValid
     }
   }
 
+  let admissionApplicationToConvert: { id: string; status: string; shouldApprove: boolean } | null = null
+
   if (payload.admissionApplicationId) {
     const [application] = await db
       .select({
@@ -868,7 +917,17 @@ enrollmentRoutes.post('/', requirePermission(PERMISSIONS.ACADEMIC_WRITE), zValid
       throw new AppError('La inscripción asociada no pertenece al mismo año lectivo', 409)
     }
     if (application.status !== 'accepted' && application.status !== 'converted') {
-      throw new AppError('La inscripción asociada debe estar aprobada antes de matricular', 409)
+      if (!payload.approveAdmissionIfNeeded) {
+        throw new AppError(
+          'La inscripción asociada no está aprobada. Confirma si quieres aprobarla y continuar con la matrícula.',
+          409,
+          { status: application.status, admissionApplicationId: application.id },
+          'ADMISSION_APPROVAL_REQUIRED',
+        )
+      }
+      admissionApplicationToConvert = { id: application.id, status: application.status, shouldApprove: true }
+    } else {
+      admissionApplicationToConvert = { id: application.id, status: application.status, shouldApprove: false }
     }
   }
 
@@ -902,6 +961,25 @@ enrollmentRoutes.post('/', requirePermission(PERMISSIONS.ACADEMIC_WRITE), zValid
     .returning({ id: enrollments.id })
 
   if (!item) throw new AppError('No fue posible crear la matrícula', 500)
+
+  if (admissionApplicationToConvert) {
+    await db
+      .update(admissionApplications)
+      .set({
+        ...(admissionApplicationToConvert.shouldApprove
+          ? {
+              status: 'accepted',
+              acceptedAt: new Date(),
+              reviewedAt: new Date(),
+              reviewedBy: user.id,
+            }
+          : {}),
+        convertedEnrollmentId: item.id,
+        updatedAt: new Date(),
+        updatedBy: user.id,
+      })
+      .where(eq(admissionApplications.id, admissionApplicationToConvert.id))
+  }
 
   await writeAuditLog(db, {
     tenantId,

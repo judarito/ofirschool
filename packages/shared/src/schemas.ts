@@ -464,6 +464,15 @@ export const manualAdmissionSchema = z.object({
     gender: z.string().min(1).max(20),
   }),
   guardian: guardianSchema,
+  answers: z.record(z.string(), answerValueSchema).default({}),
+})
+
+export const admissionUpdateSchema = z.object({
+  requestedGradeId: z.uuid(),
+  requestedGroupId: z.uuid().optional().or(z.literal('')).or(z.null()),
+  source: z.enum(['new_student', 'transfer', 'reentry']).default('new_student'),
+  notes: z.string().max(1200).optional().or(z.literal('')).or(z.null()),
+  guardian: guardianSchema,
 })
 
 export const enrollmentCreateSchema = z.object({
@@ -478,6 +487,7 @@ export const enrollmentCreateSchema = z.object({
   enrollmentType: z.enum(['new', 'renewal', 'promotion', 'auto_promotion', 'transfer']).default('new'),
   enrollmentStatus: z.enum(['draft', 'pending', 'active', 'cancelled']).default('draft'),
   enrollmentDate: z.string().date(),
+  approveAdmissionIfNeeded: z.boolean().default(false).optional(),
 })
 
 export const enrollmentFiltersSchema = z.object({
@@ -632,6 +642,7 @@ export type PublicAdmissionSubmissionInput = z.infer<typeof publicAdmissionSubmi
 export type EnrollmentFormEditorInput = z.infer<typeof enrollmentFormEditorSchema>
 export type AdmissionProcessInput = z.infer<typeof admissionProcessSchema>
 export type ManualAdmissionInput = z.infer<typeof manualAdmissionSchema>
+export type AdmissionUpdateInput = z.infer<typeof admissionUpdateSchema>
 export type EnrollmentCreateInput = z.infer<typeof enrollmentCreateSchema>
 export type EnrollmentFiltersInput = z.infer<typeof enrollmentFiltersSchema>
 export type EnrollmentCandidateFiltersInput = z.infer<typeof enrollmentCandidateFiltersSchema>
@@ -1179,5 +1190,3 @@ export const autoAlertSchema = z.object({
 
 export type NotificationTriggerInput = z.infer<typeof notificationTriggerSchema>
 export type AutoAlertInput = z.infer<typeof autoAlertSchema>
-
-

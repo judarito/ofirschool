@@ -11,6 +11,8 @@ import {
   admissionStatusHistory,
   enrollments,
   formFieldValues,
+  formFields,
+  formSections,
   formSubmissions,
   formTemplates,
   formTemplateVersions,
@@ -31,6 +33,7 @@ import {
   admissionDocumentReviewSchema,
   admissionProcessSchema,
   manualAdmissionSchema,
+  admissionUpdateSchema,
   admissionConversionSchema,
   admissionFiltersSchema,
   admissionStatusUpdateSchema,
@@ -338,6 +341,141 @@ const formatFieldDisplayValue = (row: {
   return 'Sin respuesta'
 }
 
+const hasAnswerValue = (value: unknown) => {
+  if (value === null || value === undefined) return false
+  if (typeof value === 'string') return value.trim().length > 0
+  if (Array.isArray(value)) return value.length > 0
+  return true
+}
+
+const buildFieldValueRecord = ({
+  tenantId,
+  submissionId,
+  field,
+  sectionTitle,
+  value,
+}: {
+  tenantId: string
+  submissionId: string
+  field: {
+    id: string
+    formSectionId: string
+    code: string
+    label: string
+    fieldType: string
+  }
+  sectionTitle: string
+  value: unknown
+}) => {
+  const base = {
+    tenantId,
+    formSubmissionId: submissionId,
+    formFieldId: field.id,
+    formSectionId: field.formSectionId,
+    fieldCode: field.code,
+    fieldType: field.fieldType,
+    fieldLabelSnapshot: field.label,
+    sectionTitleSnapshot: sectionTitle,
+    searchableValue: null as string | null,
+  }
+
+  if (field.fieldType === 'checkbox') {
+    return {
+      ...base,
+      valueBoolean: Boolean(value),
+      searchableValue: Boolean(value) ? 'si' : 'no',
+    }
+  }
+
+  if (field.fieldType === 'number' || field.fieldType === 'decimal') {
+    const numeric = Number(value)
+
+    return {
+      ...base,
+      valueNumber: Number.isFinite(numeric) ? String(numeric) : null,
+      searchableValue: Number.isFinite(numeric) ? String(numeric) : null,
+    }
+  }
+
+  if (field.fieldType === 'date') {
+    return {
+      ...base,
+      valueDate: typeof value === 'string' ? value : null,
+      searchableValue: typeof value === 'string' ? value : null,
+    }
+  }
+
+  if (field.fieldType === 'datetime') {
+    return {
+      ...base,
+      valueTimestamp: typeof value === 'string' ? new Date(value) : null,
+      searchableValue: typeof value === 'string' ? value : null,
+    }
+  }
+
+  if (field.fieldType === 'select' || field.fieldType === 'radio') {
+    return {
+      ...base,
+      valueText: typeof value === 'string' ? value : null,
+      valueJson: value,
+      searchableValue: typeof value === 'string' ? value : null,
+    }
+  }
+
+  if (field.fieldType === 'multiselect') {
+    const arrayValue = Array.isArray(value) ? value.map((item) => String(item)) : []
+
+    return {
+      ...base,
+      valueJson: arrayValue,
+      searchableValue: arrayValue.join(', '),
+    }
+  }
+
+  return {
+    ...base,
+    valueText: typeof value === 'string' ? value : String(value),
+    valueJson: typeof value === 'string' ? null : value,
+    searchableValue: typeof value === 'string' ? value : String(value),
+  }
+}
+
+const summarizeDatabaseError = (error: unknown) => {
+  if (!(error instanceof Error)) return { message: String(error) }
+  const record = error as Error & {
+    cause?: unknown
+    code?: string
+    constraint?: string
+    detail?: string
+  }
+
+  const causeMessage = record.cause instanceof Error ? record.cause.message : undefined
+  const message = error.message.startsWith('Failed query:') && causeMessage ? causeMessage : error.message
+
+  return {
+    name: error.name,
+    message,
+    code: record.code,
+    constraint: record.constraint,
+    detail: record.detail,
+    cause: causeMessage,
+  }
+}
+
+const manualAdmissionDbError = (stage: string, error: unknown) => {
+  const details = {
+    stage,
+    database: summarizeDatabaseError(error),
+  }
+  console.error('Manual admission failed', details)
+  return new AppError(
+    `No fue posible guardar la inscripción manual en la etapa "${stage}".`,
+    500,
+    details,
+    `MANUAL_ADMISSION_${stage.toUpperCase()}_FAILED`,
+  )
+}
+
 admissionRoutes.get('/process/:year', requirePermission(PERMISSIONS.ACADEMIC_READ), async (c) => {
   const db = c.get('db')
   const tenantId = c.get('tenantId')
@@ -391,6 +529,124 @@ admissionRoutes.get('/process/:year', requirePermission(PERMISSIONS.ACADEMIC_REA
   }
 
   return c.json(ok('Proceso de inscripcion cargado', process))
+})
+
+admissionRoutes.get('/forms/:year/active', requirePermission(PERMISSIONS.ACADEMIC_READ), async (c) => {
+  const db = c.get('db')
+  const tenantId = c.get('tenantId')
+  const year = Number(c.req.param('year'))
+
+  if (!Number.isInteger(year)) throw new AppError('Año lectivo invalido', 400)
+
+  const [academicYear] = await db
+    .select({ id: academicYears.id, name: academicYears.name, year: academicYears.year })
+    .from(academicYears)
+    .where(and(eq(academicYears.tenantId, tenantId), eq(academicYears.year, year), eq(academicYears.isDeleted, false)))
+    .limit(1)
+
+  if (!academicYear) throw new AppError('Año lectivo no encontrado', 404)
+
+  const [template] = await db
+    .select({
+      id: formTemplates.id,
+      name: formTemplates.name,
+      settings: formTemplates.settings,
+      activeVersionId: formTemplates.activeVersionId,
+    })
+    .from(formTemplates)
+    .where(
+      and(
+        eq(formTemplates.tenantId, tenantId),
+        eq(formTemplates.academicYearId, academicYear.id),
+        eq(formTemplates.module, 'enrollment'),
+        eq(formTemplates.status, 'active'),
+        eq(formTemplates.isDeleted, false),
+      ),
+    )
+    .orderBy(desc(formTemplates.createdAt))
+    .limit(1)
+
+  if (!template) {
+    return c.json(ok('No hay formulario activo para este año lectivo', { form: null }))
+  }
+
+  const versionFilter = template.activeVersionId
+    ? and(
+        eq(formTemplateVersions.tenantId, tenantId),
+        eq(formTemplateVersions.id, template.activeVersionId),
+        eq(formTemplateVersions.status, 'published'),
+        eq(formTemplateVersions.isDeleted, false),
+      )
+    : and(
+        eq(formTemplateVersions.tenantId, tenantId),
+        eq(formTemplateVersions.formTemplateId, template.id),
+        eq(formTemplateVersions.status, 'published'),
+        eq(formTemplateVersions.isDeleted, false),
+      )
+
+  const [version] = await db
+    .select({
+      id: formTemplateVersions.id,
+      versionNumber: formTemplateVersions.versionNumber,
+      schemaSnapshot: formTemplateVersions.schemaSnapshot,
+    })
+    .from(formTemplateVersions)
+    .where(versionFilter)
+    .orderBy(desc(formTemplateVersions.versionNumber))
+    .limit(1)
+
+  if (!version) {
+    return c.json(ok('No hay version publicada para este formulario', { form: null }))
+  }
+
+  const sections = await db
+    .select({
+      id: formSections.id,
+      code: formSections.code,
+      title: formSections.title,
+      description: formSections.description,
+      sortOrder: formSections.sortOrder,
+    })
+    .from(formSections)
+    .where(and(eq(formSections.tenantId, tenantId), eq(formSections.formTemplateVersionId, version.id), eq(formSections.isDeleted, false)))
+    .orderBy(asc(formSections.sortOrder), asc(formSections.title))
+
+  const fields = await db
+    .select({
+      id: formFields.id,
+      sectionId: formFields.formSectionId,
+      code: formFields.code,
+      label: formFields.label,
+      helpText: formFields.helpText,
+      fieldType: formFields.fieldType,
+      placeholder: formFields.placeholder,
+      options: formFields.options,
+      validationRules: formFields.validationRules,
+      visibilityRules: formFields.visibilityRules,
+      isRequired: formFields.isRequired,
+      sortOrder: formFields.sortOrder,
+    })
+    .from(formFields)
+    .where(and(eq(formFields.tenantId, tenantId), eq(formFields.formTemplateVersionId, version.id), eq(formFields.isDeleted, false)))
+    .orderBy(asc(formFields.sortOrder), asc(formFields.label))
+
+  return c.json(
+    ok('Formulario activo de inscripcion cargado', {
+      form: {
+        templateId: template.id,
+        versionId: version.id,
+        versionNumber: version.versionNumber,
+        name: template.name,
+        settings: template.settings,
+        schemaSnapshot: version.schemaSnapshot,
+        academicYear,
+        sections: sections.map((section) => ({
+          ...section,
+          fields: fields.filter((field) => field.sectionId === section.id).map(({ sectionId: _sectionId, ...field }) => field),
+        })),
+      },
+    }),
+  )
 })
 
 admissionRoutes.put('/process/:year', requirePermission(PERMISSIONS.ACADEMIC_WRITE), zValidator('json', admissionProcessSchema), async (c) => {
@@ -1134,38 +1390,44 @@ admissionRoutes.post('/applications/manual', requirePermission(PERMISSIONS.ACADE
     .where(and(eq(students.tenantId, tenantId), eq(students.documentType, payload.student.documentType), eq(students.documentNumber, payload.student.documentNumber), eq(students.isDeleted, false)))
     .limit(1)
 
-  const [student] = existingStudent
-    ? await db
-        .update(students)
-        .set({
-          firstName: payload.student.firstName,
-          middleName: payload.student.middleName || null,
-          lastName: payload.student.lastName,
-          birthDate: payload.student.birthDate,
-          gender: payload.student.gender,
-          bloodType: payload.student.bloodType || null,
-          updatedAt: new Date(),
-          updatedBy: user.id,
-        })
-        .where(eq(students.id, existingStudent.id))
-        .returning({ id: students.id })
-    : await db
-        .insert(students)
-        .values({
-          tenantId,
-          firstName: payload.student.firstName,
-          middleName: payload.student.middleName || null,
-          lastName: payload.student.lastName,
-          documentType: payload.student.documentType,
-          documentNumber: payload.student.documentNumber,
-          birthDate: payload.student.birthDate,
-          gender: payload.student.gender,
-          bloodType: payload.student.bloodType || null,
-          status: 'active',
-          createdBy: user.id,
-          updatedBy: user.id,
-        })
-        .returning({ id: students.id })
+  let student: { id: string } | undefined
+
+  try {
+    ;[student] = existingStudent
+      ? await db
+          .update(students)
+          .set({
+            firstName: payload.student.firstName,
+            middleName: payload.student.middleName || null,
+            lastName: payload.student.lastName,
+            birthDate: payload.student.birthDate,
+            gender: payload.student.gender,
+            bloodType: payload.student.bloodType || null,
+            updatedAt: new Date(),
+            updatedBy: user.id,
+          })
+          .where(eq(students.id, existingStudent.id))
+          .returning({ id: students.id })
+      : await db
+          .insert(students)
+          .values({
+            tenantId,
+            firstName: payload.student.firstName,
+            middleName: payload.student.middleName || null,
+            lastName: payload.student.lastName,
+            documentType: payload.student.documentType,
+            documentNumber: payload.student.documentNumber,
+            birthDate: payload.student.birthDate,
+            gender: payload.student.gender,
+            bloodType: payload.student.bloodType || null,
+            status: 'active',
+            createdBy: user.id,
+            updatedBy: user.id,
+          })
+          .returning({ id: students.id })
+  } catch (error) {
+    throw manualAdmissionDbError('student', error)
+  }
 
   const [existingGuardian] = await db
     .select({ id: guardians.id })
@@ -1180,37 +1442,43 @@ admissionRoutes.post('/applications/manual', requirePermission(PERMISSIONS.ACADE
     )
     .limit(1)
 
-  const [guardian] = existingGuardian
-    ? await db
-        .update(guardians)
-        .set({
-          fullName: `${payload.guardian.firstName} ${payload.guardian.lastName}`,
-          firstName: payload.guardian.firstName,
-          lastName: payload.guardian.lastName,
-          email: payload.guardian.email,
-          phone: payload.guardian.phone,
-          relationship: payload.guardian.relationship,
-          updatedAt: new Date(),
-          updatedBy: user.id,
-        })
-        .where(eq(guardians.id, existingGuardian.id))
-        .returning({ id: guardians.id })
-    : await db
-        .insert(guardians)
-        .values({
-          tenantId,
-          fullName: `${payload.guardian.firstName} ${payload.guardian.lastName}`,
-          firstName: payload.guardian.firstName,
-          lastName: payload.guardian.lastName,
-          documentType: payload.guardian.documentType,
-          documentNumber: payload.guardian.documentNumber,
-          email: payload.guardian.email,
-          phone: payload.guardian.phone,
-          relationship: payload.guardian.relationship,
-          createdBy: user.id,
-          updatedBy: user.id,
-        })
-        .returning({ id: guardians.id })
+  let guardian: { id: string } | undefined
+
+  try {
+    ;[guardian] = existingGuardian
+      ? await db
+          .update(guardians)
+          .set({
+            fullName: `${payload.guardian.firstName} ${payload.guardian.lastName}`,
+            firstName: payload.guardian.firstName,
+            lastName: payload.guardian.lastName,
+            email: payload.guardian.email,
+            phone: payload.guardian.phone,
+            relationship: payload.guardian.relationship,
+            updatedAt: new Date(),
+            updatedBy: user.id,
+          })
+          .where(eq(guardians.id, existingGuardian.id))
+          .returning({ id: guardians.id })
+      : await db
+          .insert(guardians)
+          .values({
+            tenantId,
+            fullName: `${payload.guardian.firstName} ${payload.guardian.lastName}`,
+            firstName: payload.guardian.firstName,
+            lastName: payload.guardian.lastName,
+            documentType: payload.guardian.documentType,
+            documentNumber: payload.guardian.documentNumber,
+            email: payload.guardian.email,
+            phone: payload.guardian.phone,
+            relationship: payload.guardian.relationship,
+            createdBy: user.id,
+            updatedBy: user.id,
+          })
+          .returning({ id: guardians.id })
+  } catch (error) {
+    throw manualAdmissionDbError('guardian', error)
+  }
 
   if (!student || !guardian) throw new AppError('No fue posible crear la solicitud manual', 500)
 
@@ -1228,14 +1496,28 @@ admissionRoutes.post('/applications/manual', requirePermission(PERMISSIONS.ACADE
     .limit(1)
 
   if (!existingRelation) {
-    await db.insert(studentGuardians).values({
-      tenantId,
-      studentId: student.id,
-      guardianId: guardian.id,
-      isPrimary: true,
-      createdBy: user.id,
-      updatedBy: user.id,
-    })
+    try {
+      await db.execute(sql`
+        insert into student_guardians (
+          tenant_id,
+          student_id,
+          guardian_id,
+          is_primary,
+          created_by,
+          updated_by
+        )
+        values (
+          ${tenantId},
+          ${student.id},
+          ${guardian.id},
+          ${true},
+          ${user.id},
+          ${user.id}
+        )
+      `)
+    } catch (error) {
+      throw manualAdmissionDbError('relation', error)
+    }
   }
 
   const [existingApplication] = await db
@@ -1253,27 +1535,172 @@ admissionRoutes.post('/applications/manual', requirePermission(PERMISSIONS.ACADE
 
   if (existingApplication) throw new AppError('Ya existe una inscripción para este estudiante en ese año lectivo', 409)
 
-  const [application] = await db
-    .insert(admissionApplications)
-    .values({
-      tenantId,
-      studentId: student.id,
-      academicYearId: payload.academicYearId,
-      requestedGradeId: payload.requestedGradeId,
-      requestedGroupId: payload.requestedGroupId || null,
-      primaryGuardianId: guardian.id,
-      status: 'reviewing',
-      source: payload.source,
-      applicationDate: new Date(),
-      submittedAt: new Date(),
-      notes: payload.notes || null,
-      fixedData: { createdInternally: true },
-      createdBy: user.id,
-      updatedBy: user.id,
+  const [template] = await db
+    .select({
+      id: formTemplates.id,
+      activeVersionId: formTemplates.activeVersionId,
+      settings: formTemplates.settings,
     })
-    .returning({ id: admissionApplications.id })
+    .from(formTemplates)
+    .where(
+      and(
+        eq(formTemplates.tenantId, tenantId),
+        eq(formTemplates.academicYearId, payload.academicYearId),
+        eq(formTemplates.module, 'enrollment'),
+        eq(formTemplates.status, 'active'),
+        eq(formTemplates.isDeleted, false),
+      ),
+    )
+    .orderBy(desc(formTemplates.createdAt))
+    .limit(1)
+
+  const versionFilter = template?.activeVersionId
+    ? and(
+        eq(formTemplateVersions.tenantId, tenantId),
+        eq(formTemplateVersions.id, template.activeVersionId),
+        eq(formTemplateVersions.status, 'published'),
+        eq(formTemplateVersions.isDeleted, false),
+      )
+    : template
+      ? and(
+          eq(formTemplateVersions.tenantId, tenantId),
+          eq(formTemplateVersions.formTemplateId, template.id),
+          eq(formTemplateVersions.status, 'published'),
+          eq(formTemplateVersions.isDeleted, false),
+        )
+      : undefined
+
+  const [version] = versionFilter
+    ? await db
+        .select({
+          id: formTemplateVersions.id,
+          versionNumber: formTemplateVersions.versionNumber,
+          schemaSnapshot: formTemplateVersions.schemaSnapshot,
+        })
+        .from(formTemplateVersions)
+        .where(versionFilter)
+        .orderBy(desc(formTemplateVersions.versionNumber))
+        .limit(1)
+    : []
+
+  const versionSections = version
+    ? await db
+        .select({
+          id: formSections.id,
+          title: formSections.title,
+        })
+        .from(formSections)
+        .where(and(eq(formSections.tenantId, tenantId), eq(formSections.formTemplateVersionId, version.id), eq(formSections.isDeleted, false)))
+    : []
+
+  const versionFields = version
+    ? await db
+        .select({
+          id: formFields.id,
+          formSectionId: formFields.formSectionId,
+          code: formFields.code,
+          label: formFields.label,
+          fieldType: formFields.fieldType,
+          isRequired: formFields.isRequired,
+        })
+        .from(formFields)
+        .where(and(eq(formFields.tenantId, tenantId), eq(formFields.formTemplateVersionId, version.id), eq(formFields.isDeleted, false)))
+    : []
+
+  const requiredFieldErrors = versionFields
+    .filter((field) => field.isRequired)
+    .filter((field) => !hasAnswerValue(payload.answers[field.code]))
+    .map((field) => field.label)
+
+  if (requiredFieldErrors.length) {
+    throw new AppError(`Faltan campos obligatorios del formulario: ${requiredFieldErrors.join(', ')}`, 400)
+  }
+
+  let application: { id: string } | undefined
+
+  try {
+    ;[application] = await db
+      .insert(admissionApplications)
+      .values({
+        tenantId,
+        studentId: student.id,
+        academicYearId: payload.academicYearId,
+        requestedGradeId: payload.requestedGradeId,
+        requestedGroupId: payload.requestedGroupId || null,
+        primaryGuardianId: guardian.id,
+        status: 'reviewing',
+        source: payload.source,
+        applicationDate: new Date(),
+        submittedAt: new Date(),
+        notes: payload.notes || null,
+        fixedData: { createdInternally: true },
+        createdBy: user.id,
+        updatedBy: user.id,
+      })
+      .returning({ id: admissionApplications.id })
+  } catch (error) {
+    throw manualAdmissionDbError('application', error)
+  }
 
   if (!application) throw new AppError('No fue posible crear la solicitud', 500)
+
+  let submissionId: string | null = null
+
+  if (template && version) {
+    try {
+      const [submission] = await db
+        .insert(formSubmissions)
+        .values({
+          tenantId,
+          formTemplateId: template.id,
+          formTemplateVersionId: version.id,
+          academicYearId: payload.academicYearId,
+          admissionApplicationId: application.id,
+          studentId: student.id,
+          submittedByGuardianId: guardian.id,
+          status: 'submitted',
+          progressPercent: 100,
+          submittedAt: new Date(),
+          schemaSnapshot: version.schemaSnapshot ?? {},
+          metadata: {
+            source: 'student_module',
+            createdInternally: true,
+            processSettings: template.settings ?? {},
+          },
+          createdBy: user.id,
+          updatedBy: user.id,
+        })
+        .returning({ id: formSubmissions.id })
+
+      submissionId = submission?.id ?? null
+
+      if (!submissionId) throw new AppError('No fue posible crear la entrega del formulario', 500)
+    } catch (error) {
+      if (error instanceof AppError) throw error
+      throw manualAdmissionDbError('submission', error)
+    }
+
+    const sectionById = new Map(versionSections.map((section) => [section.id, section.title]))
+    const valueRows = versionFields
+      .filter((field) => hasAnswerValue(payload.answers[field.code]))
+      .map((field) =>
+        buildFieldValueRecord({
+          tenantId,
+          submissionId: submissionId as string,
+          field,
+          sectionTitle: sectionById.get(field.formSectionId) ?? 'Formulario',
+          value: payload.answers[field.code],
+        }),
+      )
+
+    try {
+      if (valueRows.length) {
+        await db.insert(formFieldValues).values(valueRows)
+      }
+    } catch (error) {
+      throw manualAdmissionDbError('field_values', error)
+    }
+  }
 
   await writeAuditLog(db, {
     tenantId,
@@ -1281,11 +1708,75 @@ admissionRoutes.post('/applications/manual', requirePermission(PERMISSIONS.ACADE
     entity: 'admission_applications',
     entityId: application.id,
     action: 'create_manual',
-    changes: payload as Record<string, unknown>,
+    changes: { ...(payload as Record<string, unknown>), formSubmissionId: submissionId },
     ipAddress: c.req.header('cf-connecting-ip'),
   })
 
   return c.json(created('Solicitud creada', { id: application.id }), 201)
+})
+
+admissionRoutes.put('/applications/:id', requirePermission(PERMISSIONS.ACADEMIC_WRITE), zValidator('json', admissionUpdateSchema), async (c) => {
+  const db = c.get('db')
+  const tenantId = c.get('tenantId')
+  const user = c.get('user')
+  const id = c.req.param('id')
+  const payload = c.req.valid('json')
+
+  const [application] = await db
+    .select({
+      id: admissionApplications.id,
+      primaryGuardianId: admissionApplications.primaryGuardianId,
+      studentId: admissionApplications.studentId,
+    })
+    .from(admissionApplications)
+    .where(and(eq(admissionApplications.id, id), eq(admissionApplications.tenantId, tenantId), eq(admissionApplications.isDeleted, false)))
+    .limit(1)
+
+  if (!application) throw new AppError('Inscripción no encontrada', 404)
+  if (!application.primaryGuardianId) throw new AppError('La inscripción no tiene acudiente principal asociado', 409)
+
+  const [guardian] = await db
+    .update(guardians)
+    .set({
+      firstName: payload.guardian.firstName,
+      lastName: payload.guardian.lastName,
+      fullName: `${payload.guardian.firstName} ${payload.guardian.lastName}`,
+      documentType: payload.guardian.documentType,
+      documentNumber: payload.guardian.documentNumber,
+      phone: payload.guardian.phone,
+      email: payload.guardian.email,
+      relationship: payload.guardian.relationship,
+      updatedAt: new Date(),
+      updatedBy: user.id,
+    })
+    .where(and(eq(guardians.id, application.primaryGuardianId), eq(guardians.tenantId, tenantId)))
+    .returning({ id: guardians.id })
+
+  if (!guardian) throw new AppError('Acudiente no encontrado', 404)
+
+  await db
+    .update(admissionApplications)
+    .set({
+      requestedGradeId: payload.requestedGradeId,
+      requestedGroupId: payload.requestedGroupId || null,
+      source: payload.source,
+      notes: payload.notes || null,
+      updatedAt: new Date(),
+      updatedBy: user.id,
+    })
+    .where(eq(admissionApplications.id, id))
+
+  await writeAuditLog(db, {
+    tenantId,
+    actorUserId: user.id,
+    entity: 'admission_applications',
+    entityId: id,
+    action: 'update',
+    changes: payload as Record<string, unknown>,
+    ipAddress: c.req.header('cf-connecting-ip'),
+  })
+
+  return c.json(ok('Inscripción actualizada', { id }))
 })
 
 admissionRoutes.post('/applications/:id/convert-to-enrollment', requirePermission(PERMISSIONS.ACADEMIC_WRITE), zValidator('json', admissionConversionSchema), async (c) => {

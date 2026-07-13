@@ -191,6 +191,46 @@ export interface AdmissionProcessDto {
   publicLink: string
 }
 
+export interface AdmissionFormFieldDto {
+  id: string
+  code: string
+  label: string
+  helpText: string | null
+  fieldType: string
+  placeholder: string | null
+  options: unknown
+  validationRules: Record<string, unknown>
+  visibilityRules: Record<string, unknown>
+  isRequired: boolean
+  sortOrder: number
+}
+
+export interface AdmissionFormSectionDto {
+  id: string
+  code: string
+  title: string
+  description: string | null
+  sortOrder: number
+  fields: AdmissionFormFieldDto[]
+}
+
+export interface AdmissionActiveFormDto {
+  form: {
+    templateId: string
+    versionId: string
+    versionNumber: number
+    name: string
+    settings: Record<string, unknown>
+    schemaSnapshot: Record<string, unknown>
+    academicYear: {
+      id: string
+      name: string
+      year: number
+    }
+    sections: AdmissionFormSectionDto[]
+  } | null
+}
+
 export interface AdmissionOverviewDto {
   year: number
   academicYearId: string
@@ -330,6 +370,15 @@ export interface EnrollmentCandidateDto {
   studentId: string
   studentName: string
   studentDocument: string
+  admissionApplication: {
+    id: string
+    status: string
+    requestedGradeId: string
+    requestedGradeName: string
+    requestedGroupId: string | null
+    requestedGroupName: string | null
+    source: string
+  } | null
   latestEnrollment: {
     id: string
     academicYearId: string

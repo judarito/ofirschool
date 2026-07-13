@@ -88,20 +88,30 @@ studentRoutes.get('/', requirePermission(PERMISSIONS.STUDENTS_READ), zValidator(
     eq(students.tenantId, tenantId),
     eq(students.isDeleted, false),
     searchFilter,
-    academicYearId ? eq(enrollments.academicYearId, academicYearId) : undefined,
-    filters.gradeId ? eq(enrollments.gradeId, filters.gradeId) : undefined,
-    filters.groupId ? eq(enrollments.groupId, filters.groupId) : undefined,
+    academicYearId ? or(eq(enrollments.academicYearId, academicYearId), eq(admissionApplications.academicYearId, academicYearId)) : undefined,
+    filters.gradeId ? or(eq(enrollments.gradeId, filters.gradeId), eq(admissionApplications.requestedGradeId, filters.gradeId)) : undefined,
+    filters.groupId ? or(eq(enrollments.groupId, filters.groupId), eq(admissionApplications.requestedGroupId, filters.groupId)) : undefined,
   )
 
   const items = await db
     .select({
       student: students,
-      academicYearName: academicYears.name,
-      gradeName: grades.name,
-      groupName: groups.name,
+      academicYearName: sql<string | null>`coalesce(
+        ${academicYears.name},
+        (select ay_adm.name from academic_years ay_adm where ay_adm.id = ${admissionApplications.academicYearId})
+      )`,
+      gradeName: sql<string | null>`coalesce(
+        ${grades.name},
+        (select g_adm.name from grades g_adm where g_adm.id = ${admissionApplications.requestedGradeId})
+      )`,
+      groupName: sql<string | null>`coalesce(
+        ${groups.name},
+        (select gr_adm.name from groups gr_adm where gr_adm.id = ${admissionApplications.requestedGroupId})
+      )`,
     })
     .from(students)
     .leftJoin(enrollments, and(eq(enrollments.studentId, students.id), eq(enrollments.tenantId, tenantId), eq(enrollments.isDeleted, false)))
+    .leftJoin(admissionApplications, and(eq(admissionApplications.studentId, students.id), eq(admissionApplications.tenantId, tenantId), eq(admissionApplications.isDeleted, false)))
     .leftJoin(academicYears, eq(academicYears.id, enrollments.academicYearId))
     .leftJoin(grades, eq(grades.id, enrollments.gradeId))
     .leftJoin(groups, eq(groups.id, enrollments.groupId))
@@ -114,6 +124,7 @@ studentRoutes.get('/', requirePermission(PERMISSIONS.STUDENTS_READ), zValidator(
     .select({ total: count(sql`distinct ${students.id}`) })
     .from(students)
     .leftJoin(enrollments, and(eq(enrollments.studentId, students.id), eq(enrollments.tenantId, tenantId), eq(enrollments.isDeleted, false)))
+    .leftJoin(admissionApplications, and(eq(admissionApplications.studentId, students.id), eq(admissionApplications.tenantId, tenantId), eq(admissionApplications.isDeleted, false)))
     .where(whereClause)
 
   return c.json(
@@ -181,9 +192,6 @@ studentRoutes.post('/', requirePermission(PERMISSIONS.STUDENTS_WRITE), zValidato
         gender: payload.gender,
         bloodType: payload.bloodType || null,
         status: payload.status,
-        emergencyContacts: [],
-        pickupAuthorized: [],
-        sensitiveDataAccess: {},
         createdBy: user.id,
         updatedBy: user.id,
       })

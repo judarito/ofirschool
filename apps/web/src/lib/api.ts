@@ -6,6 +6,7 @@ import type {
   AcademicYearDto,
   AdmissionApplicationDto,
   AdmissionApplicationDetailDto,
+  AdmissionActiveFormDto,
   AdmissionOverviewDto,
   AdmissionProcessDto,
   AdmissionStatusChangeResultDto,
@@ -117,7 +118,16 @@ async function request<T>(path: string, init?: RequestInit): Promise<ApiResponse
       }
 
   if (!response.ok) {
-    const message = String(payload.message ?? 'Request failed')
+    const messageParts = [String(payload.message ?? 'Request failed')]
+    const errorCode = typeof payload.errorCode === 'string' ? payload.errorCode : ''
+    const requestId = typeof payload.requestId === 'string' ? payload.requestId : ''
+    const stage = typeof payload.details?.stage === 'string' ? payload.details.stage : ''
+
+    if (errorCode) messageParts.push(`Código: ${errorCode}`)
+    if (stage) messageParts.push(`Etapa: ${stage}`)
+    if (requestId) messageParts.push(`Solicitud: ${requestId}`)
+
+    const message = messageParts.join(' · ')
     if (isAuthExpired(response.status, message)) {
       clearSessionAndRedirectToLogin()
     }
@@ -483,6 +493,8 @@ export const api = {
     }),
   getAdmissionProcess: (year: string | number) =>
     request<AdmissionProcessDto>(`/admissions/process/${encodeURIComponent(String(year))}`),
+  getActiveAdmissionForm: (year: string | number) =>
+    request<AdmissionActiveFormDto>(`/admissions/forms/${encodeURIComponent(String(year))}/active`),
   getAdmissionOverview: (year: string | number) =>
     request<AdmissionOverviewDto>(`/admissions/overview/${encodeURIComponent(String(year))}`),
   saveAdmissionProcess: (year: string | number, payload: Record<string, unknown>) =>
@@ -515,6 +527,11 @@ export const api = {
   createManualAdmission: (payload: Record<string, unknown>) =>
     request<{ id: string }>('/admissions/applications/manual', {
       method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  updateAdmissionApplication: (id: string, payload: Record<string, unknown>) =>
+    request<{ id: string }>(`/admissions/applications/${encodeURIComponent(id)}`, {
+      method: 'PUT',
       body: JSON.stringify(payload),
     }),
   updateAdmissionStatus: (id: string, payload: Record<string, unknown>) =>
