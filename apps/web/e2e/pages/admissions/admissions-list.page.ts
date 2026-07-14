@@ -21,7 +21,7 @@ export class AdmissionsListPage {
     this.searchInput = page.getByPlaceholder('Buscar por estudiante, documento o acudiente')
     this.createButton = page.getByRole('button', { name: /registrar aspirante/i }).first()
     this.reviewPendingButton = page.getByRole('button', { name: /revisar pendientes/i }).first()
-    this.processButton = page.getByRole('button', { name: /proceso/i }).first()
+    this.processButton = page.getByRole('button', { name: /configurar proceso/i }).first()
     this.advancedFiltersToggle = page.getByRole('button', { name: /más filtros|ocultar filtros/i }).first()
     this.gradeFilter = page.locator('select').filter({ hasText: /todos los grados/i })
     this.groupFilter = page.locator('select').filter({ hasText: /todos los cursos/i })
@@ -101,35 +101,34 @@ export class AdmissionsListPage {
   }) {
     const dialog = this.page.getByRole('dialog')
     const form = dialog.locator('form.form-grid')
-    const inputs = form.locator('input')
-    const selects = form.locator('select')
-    const gradeOptions = await selects.first().locator('option').allTextContents()
+    const gradeSelect = form.getByRole('combobox', { name: /grado solicitado/i })
+    const gradeOptions = await gradeSelect.locator('option').allTextContents()
     const availableGrade = gradeOptions.find(g => g && g.trim() !== '')
     if (!availableGrade) return false
 
-    await selects.nth(0).selectOption({ label: availableGrade })
+    await gradeSelect.selectOption({ label: availableGrade })
     if (data.source) {
-      await selects.nth(1).selectOption({ label: data.source })
+      await form.getByRole('combobox', { name: /tipo de ingreso/i }).selectOption({ label: data.source })
     }
-    await inputs.nth(0).fill(data.studentFirstName)
+    await form.getByRole('textbox', { name: /nombres estudiante/i }).fill(data.studentFirstName)
     if (data.studentMiddleName) {
-      await inputs.nth(1).fill(data.studentMiddleName)
+      await form.getByRole('textbox', { name: /segundo nombre/i }).fill(data.studentMiddleName)
     }
-    await inputs.nth(2).fill(data.studentLastName)
-    await selects.nth(2).selectOption({ label: data.studentDocumentType })
-    await inputs.nth(3).fill(data.studentDocumentNumber)
+    await form.getByRole('textbox', { name: /apellidos estudiante/i }).fill(data.studentLastName)
+    await form.getByRole('combobox', { name: /tipo documento estudiante/i }).selectOption(data.studentDocumentType)
+    await form.getByRole('textbox', { name: /documento estudiante/i }).fill(data.studentDocumentNumber)
     await form.locator('input[type="date"]').fill(data.studentBirthDate)
-    await selects.nth(3).selectOption({ label: data.studentGender })
+    await form.getByRole('combobox', { name: /género/i }).selectOption({ label: data.studentGender })
     if (data.studentBloodType) {
-      await form.locator('input[placeholder*="O+"]').fill(data.studentBloodType)
+      await form.getByRole('combobox', { name: /grupo sanguíneo/i }).selectOption(data.studentBloodType)
     }
-    await inputs.nth(4).fill(data.guardianFirstName)
-    await inputs.nth(5).fill(data.guardianLastName)
-    await selects.nth(4).selectOption({ label: data.guardianDocumentType })
-    await inputs.nth(6).fill(data.guardianDocumentNumber)
-    await inputs.nth(7).fill(data.guardianPhone)
-    await inputs.nth(8).fill(data.guardianEmail)
-    await selects.nth(5).selectOption({ label: data.guardianRelationship })
+    await form.getByRole('textbox', { name: /nombres acudiente/i }).fill(data.guardianFirstName)
+    await form.getByRole('textbox', { name: /apellidos acudiente/i }).fill(data.guardianLastName)
+    await form.getByRole('combobox', { name: /tipo documento acudiente/i }).selectOption(data.guardianDocumentType)
+    await form.getByRole('textbox', { name: /documento acudiente/i }).fill(data.guardianDocumentNumber)
+    await form.getByRole('textbox', { name: /teléfono acudiente/i }).fill(data.guardianPhone)
+    await form.getByRole('textbox', { name: /correo acudiente/i }).fill(data.guardianEmail)
+    await form.getByRole('combobox', { name: /parentesco/i }).selectOption({ label: data.guardianRelationship })
     return true
   }
 

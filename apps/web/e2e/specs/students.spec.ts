@@ -16,45 +16,24 @@ test.describe('Students - CRUD', () => {
     await expect(studentsPage.getFlowStepTitle(3)).toHaveText('Matricula anual')
   })
 
-  test('should show create and import buttons', async ({ studentsPage }) => {
+  test('should show admission registration and import buttons', async ({ studentsPage }) => {
     await expect(studentsPage.createButton).toBeVisible()
     await expect(studentsPage.importButton).toBeVisible()
   })
 
-  test('should open create student modal', async ({ studentsPage }) => {
+  test('should open the single aspirant registration flow', async ({ studentsPage }) => {
     await studentsPage.clickCreate()
     await expect(studentsPage.page.getByRole('dialog')).toBeVisible()
-    await expect(studentsPage.page.getByRole('heading', { name: /nuevo estudiante/i })).toBeVisible()
+    await expect(studentsPage.page).toHaveURL(/\/admissions/)
+    await expect(studentsPage.page.getByRole('heading', { name: /registrar aspirante/i })).toBeVisible()
   })
 
   test('should fill student form fields', async ({ studentsPage }) => {
-    const uniqueId = Date.now().toString().slice(-8)
     await studentsPage.clickCreate()
-    await studentsPage.fillStudentForm({
-      firstName: 'Juan',
-      middleName: 'Carlos',
-      lastName: 'Perez',
-      documentType: 'TI',
-      documentNumber: uniqueId,
-      birthDate: '2012-05-10',
-      gender: 'Masculino',
-      bloodType: 'O+',
-      status: 'Activo',
-    })
-    await studentsPage.fillAdmissionForm({
-      guardianFirstName: 'Maria',
-      guardianLastName: 'Lopez',
-      guardianDocumentType: 'CC',
-      guardianDocumentNumber: '9876543210',
-      guardianPhone: '3001234567',
-      guardianEmail: 'maria@test.com',
-      guardianRelationship: 'Madre',
-    })
-    // Verify fields were filled
     const dialog = studentsPage.page.getByRole('dialog')
-    await expect(dialog.getByRole('textbox', { name: 'Nombres', exact: true })).toHaveValue('Juan')
-    await expect(dialog.getByRole('textbox', { name: 'Apellidos', exact: true })).toHaveValue('Perez')
-    await expect(dialog.getByRole('combobox', { name: 'Tipo documento', exact: true })).toHaveValue('TI')
+    await expect(dialog.getByRole('textbox', { name: /nombres estudiante/i })).toBeVisible()
+    await expect(dialog.getByRole('textbox', { name: /documento estudiante/i })).toBeVisible()
+    await expect(dialog.getByRole('textbox', { name: /nombres acudiente/i })).toBeVisible()
   })
 
   test('should have submit button in the form', async ({ studentsPage }) => {

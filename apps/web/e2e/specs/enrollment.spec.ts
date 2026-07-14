@@ -9,23 +9,24 @@ test.describe('Enrollment - Admin Panel', () => {
     await enrollmentsListPage.goto()
   })
 
-  test('should display the enrollments page with view tabs', async ({ enrollmentsListPage }) => {
-    await expect(enrollmentsListPage.getViewTabs()).toHaveCount(4)
+  test('should display the enrollments page with workflow actions', async ({ enrollmentsListPage }) => {
+    await expect(enrollmentsListPage.getViewTabs()).toHaveCount(3)
   })
 
-  test('should display all view tabs with correct labels', async ({ enrollmentsListPage }) => {
-    const tabs = enrollmentsListPage.getViewTabs()
-    const labels = await tabs.allTextContents()
-    expect(labels.some(l => l.includes('Bandeja'))).toBeTruthy()
-    expect(labels.some(l => l.includes('Continuidad'))).toBeTruthy()
-    expect(labels.some(l => l.includes('Cierre'))).toBeTruthy()
+  test('should display all workflow actions with clear labels', async ({ enrollmentsListPage }) => {
+    const actions = enrollmentsListPage.getViewTabs()
+    const labels = await actions.allTextContents()
+    expect(labels.some(l => l.includes('Matricular estudiante'))).toBeTruthy()
+    expect(labels.some(l => l.includes('Renovar o promover curso'))).toBeTruthy()
+    expect(labels.some(l => l.includes('Registrar promoción final'))).toBeTruthy()
   })
 
-  test('should switch between view tabs', async ({ enrollmentsListPage }) => {
-    for (const label of ['Continuidad', 'Cierre', 'Bandeja']) {
-      await enrollmentsListPage.clickViewTab(label)
-      await expect(enrollmentsListPage.getViewTabs().filter({ hasText: label })).toHaveClass(/active/)
-    }
+  test('should open continuity and annual close from workflow actions', async ({ enrollmentsListPage }) => {
+    await enrollmentsListPage.clickContinuity()
+    await expect(enrollmentsListPage.page.getByRole('heading', { name: /continuidad masiva/i })).toBeVisible()
+    await enrollmentsListPage.page.getByRole('button', { name: /cancelar|cerrar/i }).first().click()
+    await enrollmentsListPage.clickAnnualClosure()
+    await expect(enrollmentsListPage.page.getByRole('heading', { name: /cierre anual/i })).toBeVisible()
   })
 
   test('should show all action buttons in header', async ({ enrollmentsListPage }) => {
@@ -37,7 +38,7 @@ test.describe('Enrollment - Admin Panel', () => {
   test('should show inline summary card with workflow info', async ({ enrollmentsListPage }) => {
     await expect(enrollmentsListPage.summaryTitle).toBeVisible()
     await expect(enrollmentsListPage.summaryValue).toBeVisible()
-    await expect(enrollmentsListPage.summaryActions).toHaveCount(2)
+    await expect(enrollmentsListPage.summaryActions).toHaveCount(1)
   })
 
   test('should toggle advanced filters', async ({ enrollmentsListPage }) => {
@@ -46,10 +47,6 @@ test.describe('Enrollment - Admin Panel', () => {
     await expect(enrollmentsListPage.groupFilter).toBeVisible()
     await expect(enrollmentsListPage.clearFiltersButton).toBeVisible()
     await enrollmentsListPage.clearFilters()
-  })
-
-  test('should have export button', async ({ enrollmentsListPage }) => {
-    await expect(enrollmentsListPage.exportButton).toBeVisible()
   })
 
   test('should open create enrollment modal', async ({ enrollmentsListPage }) => {

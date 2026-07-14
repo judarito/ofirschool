@@ -47,15 +47,57 @@
   flex-wrap: wrap;
 }
 
-.enrollments-view-tabs {
-  display: flex;
-  gap: 0.55rem;
-  flex-wrap: wrap;
+.enrollments-toolbar__context {
+  display: grid;
+  gap: 0.2rem;
 }
 
-.enrollments-view-tabs .chip-button--active {
-  background: var(--brand-primary-soft);
-  border-color: color-mix(in srgb, var(--brand-primary) 28%, var(--border));
+.enrollments-toolbar__context small {
+  color: var(--text-muted);
+}
+
+.enrollment-action-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.85rem;
+}
+
+.enrollment-action-card {
+  display: grid;
+  gap: 0.35rem;
+  min-height: 128px;
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--surface);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+}
+
+.enrollment-action-card:hover,
+.enrollment-action-card:focus-visible {
+  border-color: color-mix(in srgb, var(--brand-primary) 40%, var(--border));
+  box-shadow: 0 10px 24px color-mix(in srgb, var(--brand-primary) 14%, transparent);
+  transform: translateY(-1px);
+  outline: none;
+}
+
+.enrollment-action-card strong {
+  font-size: 1rem;
+}
+
+.enrollment-action-card small {
+  line-height: 1.4;
+  color: var(--text-muted);
+}
+
+.enrollment-action-card__eyebrow {
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: uppercase;
   color: var(--brand-primary);
 }
 
@@ -89,11 +131,58 @@
   color: var(--text-muted);
 }
 
+:deep(.annual-close-drawer.modal-backdrop .modal--drawer) {
+  width: min(96vw, 1280px);
+}
+
+.annual-close-controls {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.85rem;
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--surface-soft);
+}
+
+.annual-close-controls__actions {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  justify-content: flex-end;
+}
+
+.annual-close-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.75rem 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--surface-soft);
+}
+
+.annual-close-pagination span {
+  color: var(--text-muted);
+  font-weight: 700;
+}
+
+.annual-close-pagination__actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
 @media (max-width: 900px) {
   .module-inline-summary,
   .enrollments-toolbar,
   .enrollments-toolbar__actions,
-  .enrollments-advanced-filters {
+  .enrollments-advanced-filters,
+  .enrollment-action-grid,
+  .annual-close-controls,
+  .annual-close-pagination,
+  .annual-close-controls__actions {
     display: grid;
   }
 
@@ -105,5 +194,13 @@
   .candidate-option__body {
     align-items: flex-start;
     display: grid;
+  }
+
+  .annual-close-controls {
+    grid-template-columns: 1fr;
+  }
+
+  .annual-close-controls__actions {
+    justify-content: stretch;
   }
 }

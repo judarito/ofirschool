@@ -30,7 +30,7 @@ test.describe('Admission - Admin Panel', () => {
   test('should show inline summary card', async ({ admissionsListPage }) => {
     await expect(admissionsListPage.summaryTitle).toBeVisible()
     await expect(admissionsListPage.summaryValue).toBeVisible()
-    await expect(admissionsListPage.summaryActions).toHaveCount(2)
+    await expect(admissionsListPage.summaryActions).toHaveCount(1)
   })
 
   test('should open advanced filters', async ({ admissionsListPage }) => {

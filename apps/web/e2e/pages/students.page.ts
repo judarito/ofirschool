@@ -12,7 +12,7 @@ export class StudentsPage {
   constructor(page: Page) {
     this.page = page
     this.searchInput = page.getByPlaceholder('Buscar por nombre o documento')
-    this.createButton = page.getByRole('button', { name: /nuevo estudiante/i }).first()
+    this.createButton = page.getByRole('button', { name: /registrar aspirante/i }).first()
     this.importButton = page.getByRole('button', { name: /importar/i }).first()
     this.gradeFilter = page.locator('select').filter({ hasText: /todos los grados/i })
     this.groupFilter = page.locator('select').filter({ hasText: /todos los cursos/i })

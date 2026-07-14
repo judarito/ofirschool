@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, ilike, inArray, ne, notExists, or, sql } from 'drizzle-orm'
+import { and, asc, count, desc, eq, ilike, inArray, isNull, ne, notExists, or, sql } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { academicPeriods, academicYears, admissionApplications, enrollments, gradeRecords, grades, groups, students, subjects, supportStrategies } from '@ofir/db'
@@ -29,6 +29,18 @@ export const enrollmentRoutes = new Hono<{
 }>()
 
 enrollmentRoutes.use('*', tenantMiddleware, authMiddleware)
+
+const findDuplicateIds = (ids: string[]) => {
+  const seen = new Set<string>()
+  const duplicates = new Set<string>()
+
+  for (const id of ids) {
+    if (seen.has(id)) duplicates.add(id)
+    seen.add(id)
+  }
+
+  return Array.from(duplicates)
+}
 
 const buildStudentSearchFilter = (queryTerm: string | undefined) =>
   queryTerm
@@ -1008,7 +1020,19 @@ enrollmentRoutes.post('/continuity-batch', requirePermission(PERMISSIONS.ACADEMI
 
   if (!targetYear) throw new AppError('Año lectivo destino no encontrado', 404)
 
-  const createdIds: string[] = []
+  const duplicatedStudentIds = findDuplicateIds(payload.items.map((item) => item.studentId))
+  if (duplicatedStudentIds.length) {
+    throw new AppError('El lote contiene estudiantes repetidos. No se creó ningún registro.', 400, {
+      studentIds: duplicatedStudentIds,
+    })
+  }
+
+  const recordsToCreate: Array<{
+    studentId: string
+    previousEnrollmentId: string
+    gradeId: string
+    groupId: string | null
+  }> = []
   const skipped: Array<{ studentId: string; reason: string }> = []
 
   for (const item of payload.items) {
@@ -1084,51 +1108,88 @@ enrollmentRoutes.post('/continuity-batch', requirePermission(PERMISSIONS.ACADEMI
       .limit(1)
 
     if (existing) {
-      skipped.push({ studentId: item.studentId, reason: 'El estudiante ya tiene matrícula en el año destino' })
-      continue
+      const [sameExisting] = await db
+        .select({ id: enrollments.id })
+        .from(enrollments)
+        .where(
+          and(
+            eq(enrollments.id, existing.id),
+            eq(enrollments.previousEnrollmentId, item.previousEnrollmentId),
+            eq(enrollments.gradeId, item.gradeId),
+            item.groupId ? eq(enrollments.groupId, item.groupId) : isNull(enrollments.groupId),
+            eq(enrollments.enrollmentType, payload.mode),
+          ),
+        )
+        .limit(1)
+
+      if (sameExisting) {
+        skipped.push({ studentId: item.studentId, reason: 'La continuidad ya había sido procesada para este estudiante' })
+        continue
+      }
+
+      throw new AppError('Uno o más estudiantes ya tienen una matrícula distinta en el año destino. No se creó ningún registro del lote.', 409)
     }
 
-    const [createdItem] = await db
-      .insert(enrollments)
-      .values({
-        tenantId,
-        studentId: item.studentId,
-        academicYearId: payload.academicYearId,
-        gradeId: item.gradeId,
-        groupId: item.groupId || null,
-        previousEnrollmentId: item.previousEnrollmentId,
-        enrollmentType: payload.mode,
-        enrollmentStatus: payload.enrollmentStatus,
-        enrollmentDate: new Date(`${payload.enrollmentDate}T00:00:00.000Z`),
-        status: payload.enrollmentStatus === 'active' ? 'active' : 'pending',
-        createdBy: user.id,
-        updatedBy: user.id,
-      })
-      .returning({ id: enrollments.id })
-
-    if (!createdItem) {
-      skipped.push({ studentId: item.studentId, reason: 'No fue posible crear la matrícula' })
-      continue
-    }
-
-    createdIds.push(createdItem.id)
-
-    await writeAuditLog(db, {
-      tenantId,
-      actorUserId: user.id,
-      entity: 'enrollments',
-      entityId: createdItem.id,
-      action: 'continuity_batch_create',
-      changes: {
-        academicYearId: payload.academicYearId,
-        previousEnrollmentId: item.previousEnrollmentId,
-        gradeId: item.gradeId,
-        groupId: item.groupId || null,
-        mode: payload.mode,
-      },
-      ipAddress: c.req.header('cf-connecting-ip'),
+    recordsToCreate.push({
+      studentId: item.studentId,
+      previousEnrollmentId: item.previousEnrollmentId,
+      gradeId: item.gradeId,
+      groupId: item.groupId || null,
     })
   }
+
+  const blockingErrors = skipped.filter((item) => item.reason !== 'La continuidad ya había sido procesada para este estudiante')
+  if (blockingErrors.length) {
+    throw new AppError(`El lote no se ejecutó porque ${blockingErrors.length} estudiante(s) tienen inconsistencias. Revisa el preview y vuelve a intentar.`, 409, {
+      skipped: blockingErrors,
+    })
+  }
+
+  const createdIds: string[] = []
+
+  await db.transaction(async (tx) => {
+    for (const item of recordsToCreate) {
+      const [createdItem] = await tx
+        .insert(enrollments)
+        .values({
+          tenantId,
+          studentId: item.studentId,
+          academicYearId: payload.academicYearId,
+          gradeId: item.gradeId,
+          groupId: item.groupId,
+          previousEnrollmentId: item.previousEnrollmentId,
+          enrollmentType: payload.mode,
+          enrollmentStatus: payload.enrollmentStatus,
+          enrollmentDate: new Date(`${payload.enrollmentDate}T00:00:00.000Z`),
+          status: payload.enrollmentStatus === 'active' ? 'active' : 'pending',
+          createdBy: user.id,
+          updatedBy: user.id,
+        })
+        .returning({ id: enrollments.id })
+
+      if (!createdItem) {
+        throw new AppError('No fue posible crear una matrícula del lote. No se creó ningún registro.', 500)
+      }
+
+      createdIds.push(createdItem.id)
+
+      await writeAuditLog(tx as unknown as typeof db, {
+        tenantId,
+        actorUserId: user.id,
+        entity: 'enrollments',
+        entityId: createdItem.id,
+        action: 'continuity_batch_create',
+        changes: {
+          academicYearId: payload.academicYearId,
+          previousEnrollmentId: item.previousEnrollmentId,
+          gradeId: item.gradeId,
+          groupId: item.groupId,
+          mode: payload.mode,
+        },
+        ipAddress: c.req.header('cf-connecting-ip'),
+      })
+    }
+  })
 
   return c.json(ok(`Continuidad masiva procesada para ${targetYear.name}`, {
     createdCount: createdIds.length,
@@ -1144,49 +1205,77 @@ enrollmentRoutes.post('/annual-promotion-decisions', requirePermission(PERMISSIO
   const user = c.get('user')
   const payload = c.req.valid('json')
 
-  const updatedItems: Array<{ enrollmentId: string; promotionStatus: 'pending' | 'promoted' | 'not_promoted' | 'conditional' }> = []
-
-  for (const item of payload.items) {
-    const [updated] = await db
-      .update(enrollments)
-      .set({
-        promotionStatus: item.promotionStatus,
-        updatedAt: new Date(),
-        updatedBy: user.id,
-      })
-      .where(and(
-        eq(enrollments.id, item.enrollmentId),
-        eq(enrollments.tenantId, tenantId),
-        eq(enrollments.academicYearId, payload.academicYearId),
-        eq(enrollments.isDeleted, false),
-      ))
-      .returning({ id: enrollments.id, promotionStatus: enrollments.promotionStatus })
-
-    if (!updated) {
-      throw new AppError('Una de las matrículas no existe o no pertenece al año lectivo seleccionado.', 404)
-    }
-
-    updatedItems.push({
-      enrollmentId: updated.id,
-      promotionStatus: updated.promotionStatus as 'pending' | 'promoted' | 'not_promoted' | 'conditional',
+  const targetIds = payload.items.map((item) => item.enrollmentId)
+  const duplicatedEnrollmentIds = findDuplicateIds(targetIds)
+  if (duplicatedEnrollmentIds.length) {
+    throw new AppError('El lote contiene matrículas repetidas. No se aplicó ningún cambio.', 400, {
+      enrollmentIds: duplicatedEnrollmentIds,
     })
   }
 
-  await writeAuditLog(db, {
-    tenantId,
-    actorUserId: user.id,
-    entity: 'enrollments',
-    entityId: payload.academicYearId,
-    action: 'annual_promotion_decisions',
-    changes: {
-      academicYearId: payload.academicYearId,
-      updatedCount: updatedItems.length,
-      items: updatedItems,
-    },
-    ipAddress: c.req.header('cf-connecting-ip'),
+  const existingRows = await db
+    .select({ id: enrollments.id })
+    .from(enrollments)
+    .where(and(
+      eq(enrollments.tenantId, tenantId),
+      eq(enrollments.academicYearId, payload.academicYearId),
+      eq(enrollments.isDeleted, false),
+      inArray(enrollments.id, targetIds),
+    ))
+
+  const existingIds = new Set(existingRows.map((item) => item.id))
+  const missingIds = targetIds.filter((id) => !existingIds.has(id))
+  if (missingIds.length) {
+    throw new AppError('Una o más matrículas no existen o no pertenecen al año lectivo seleccionado. No se aplicó ningún cambio.', 404, {
+      enrollmentIds: missingIds,
+    })
+  }
+
+  const updatedItems: Array<{ enrollmentId: string; promotionStatus: 'pending' | 'promoted' | 'not_promoted' | 'conditional' }> = []
+
+  await db.transaction(async (tx) => {
+    for (const item of payload.items) {
+      const [updated] = await tx
+        .update(enrollments)
+        .set({
+          promotionStatus: item.promotionStatus,
+          updatedAt: new Date(),
+          updatedBy: user.id,
+        })
+        .where(and(
+          eq(enrollments.id, item.enrollmentId),
+          eq(enrollments.tenantId, tenantId),
+          eq(enrollments.academicYearId, payload.academicYearId),
+          eq(enrollments.isDeleted, false),
+        ))
+        .returning({ id: enrollments.id, promotionStatus: enrollments.promotionStatus })
+
+      if (!updated) {
+        throw new AppError('Una de las matrículas no pudo actualizarse. No se aplicó ningún cambio.', 409)
+      }
+
+      updatedItems.push({
+        enrollmentId: updated.id,
+        promotionStatus: updated.promotionStatus as 'pending' | 'promoted' | 'not_promoted' | 'conditional',
+      })
+    }
+
+    await writeAuditLog(tx as unknown as typeof db, {
+      tenantId,
+      actorUserId: user.id,
+      entity: 'enrollments',
+      entityId: payload.academicYearId,
+      action: 'annual_promotion_decisions',
+      changes: {
+        academicYearId: payload.academicYearId,
+        updatedCount: updatedItems.length,
+        items: updatedItems,
+      },
+      ipAddress: c.req.header('cf-connecting-ip'),
+    })
   })
 
-  return c.json(ok('Decisiones de cierre anual aplicadas', {
+  return c.json(ok('Decisiones de promoción anual guardadas', {
     updatedCount: updatedItems.length,
     items: updatedItems,
   }))

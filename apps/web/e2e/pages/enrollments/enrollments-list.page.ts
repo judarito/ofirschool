@@ -7,7 +7,6 @@ export class EnrollmentsListPage {
   readonly createButton: Locator
   readonly continuityButton: Locator
   readonly closureButton: Locator
-  readonly exportButton: Locator
   readonly advancedFiltersToggle: Locator
   readonly gradeFilter: Locator
   readonly groupFilter: Locator
@@ -20,9 +19,8 @@ export class EnrollmentsListPage {
     this.page = page
     this.searchInput = page.getByPlaceholder('Buscar por identificación o nombre')
     this.createButton = page.getByRole('button', { name: /matricular estudiante/i }).first()
-    this.continuityButton = page.getByRole('button', { name: 'Continuidad' }).first()
-    this.closureButton = page.getByRole('button', { name: 'Cierre anual' }).first()
-    this.exportButton = page.getByRole('button', { name: /exportar/i }).first()
+    this.continuityButton = page.getByRole('button', { name: /renovar o promover curso/i }).first()
+    this.closureButton = page.getByRole('button', { name: /registrar promoción final/i }).first()
     this.advancedFiltersToggle = page.getByRole('button', { name: /más filtros|ocultar filtros/i }).first()
     this.gradeFilter = page.locator('select').filter({ hasText: /todos los grados/i })
     this.groupFilter = page.locator('select').filter({ hasText: /todos los cursos/i })
@@ -35,10 +33,6 @@ export class EnrollmentsListPage {
   async goto() {
     await this.page.goto(url('/enrollments'))
     await this.page.waitForSelector('.module-page--enrollments')
-  }
-
-  async clickViewTab(label: string) {
-    await this.page.getByRole('tablist').first().getByRole('button').filter({ hasText: label }).click()
   }
 
   async search(query: string) {
@@ -78,10 +72,6 @@ export class EnrollmentsListPage {
 
   async clickAnnualClosure() {
     await this.closureButton.click()
-  }
-
-  async clickExport() {
-    await this.exportButton.click()
   }
 
   async fillEnrollmentForm(data: {
@@ -143,7 +133,7 @@ export class EnrollmentsListPage {
   }
 
   getViewTabs() {
-    return this.page.getByRole('tablist').first().getByRole('button')
+    return this.page.locator('.enrollment-action-card')
   }
 
   getContinuityMetrics() {

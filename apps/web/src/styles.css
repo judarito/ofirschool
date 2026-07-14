@@ -618,6 +618,21 @@ input::placeholder {
   transform: translateY(-1px);
 }
 
+.app-is-busy button:not(:disabled),
+.app-is-busy [role='button']:not([aria-disabled='true']),
+.app-is-busy select:not(:disabled),
+.app-is-busy input[type='checkbox']:not(:disabled),
+.app-is-busy input[type='radio']:not(:disabled) {
+  pointer-events: none;
+}
+
+.app-is-busy .button:not(:disabled),
+.app-is-busy .chip-button:not(:disabled),
+.app-is-busy .table-action:not(:disabled),
+.app-is-busy .topbar-icon-button:not(:disabled) {
+  opacity: 0.7;
+}
+
 .topbar-icon-button--notify {
   position: relative;
   color: #ef4444;
@@ -2932,6 +2947,7 @@ input::placeholder {
 .modal-backdrop--drawer {
   place-items: stretch end;
   padding: 0;
+  overflow: hidden;
 }
 
 .modal {
@@ -3091,6 +3107,66 @@ input::placeholder {
   background: var(--surface);
   color: var(--text);
   box-shadow: var(--shadow-md);
+  transition: opacity 0.18s ease, transform 0.18s ease;
+  cursor: default;
+  pointer-events: none;
+}
+
+.action-feedback--visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.action-feedback--dismissed {
+  opacity: 0;
+  transform: translateY(10px);
+}
+
+.global-activity {
+  position: fixed;
+  top: 14px;
+  left: 50%;
+  z-index: 80;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-height: 38px;
+  padding: 0 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  color: var(--text);
+  box-shadow: var(--shadow-lg);
+  transform: translateX(-50%);
+  backdrop-filter: blur(12px);
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.global-activity__spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid color-mix(in srgb, var(--brand-primary) 22%, var(--border));
+  border-top-color: var(--brand-primary);
+  border-radius: 50%;
+  animation: globalActivitySpin 0.8s linear infinite;
+}
+
+.global-activity-enter-active,
+.global-activity-leave-active {
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.global-activity-enter-from,
+.global-activity-leave-to {
+  opacity: 0;
+  transform: translate(-50%, -8px);
+}
+
+@keyframes globalActivitySpin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .login-page {

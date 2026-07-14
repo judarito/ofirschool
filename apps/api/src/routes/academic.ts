@@ -96,6 +96,17 @@ export const academicRoutes = new Hono<{
 academicRoutes.use('*', tenantMiddleware, authMiddleware)
 
 const todayIsoDate = () => new Date().toISOString().slice(0, 10)
+const findDuplicateIds = (ids: string[]) => {
+  const seen = new Set<string>()
+  const duplicates = new Set<string>()
+
+  for (const id of ids) {
+    if (seen.has(id)) duplicates.add(id)
+    seen.add(id)
+  }
+
+  return Array.from(duplicates)
+}
 const weekdayOrder = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'] as const
 type Weekday = (typeof weekdayOrder)[number]
 
@@ -2265,6 +2276,7 @@ const calculateAndPersistPeriodGrades = async ({
   academicPeriodId,
   groupId,
   subjectId,
+  auditLog,
 }: {
   db: AppContextVariables['db']
   tenantId: string
@@ -2273,6 +2285,7 @@ const calculateAndPersistPeriodGrades = async ({
   academicPeriodId: string
   groupId: string
   subjectId: string
+  auditLog?: (updatedCount: number) => Parameters<typeof writeAuditLog>[1]
 }) => {
   const activities = await db
     .select()
@@ -2344,7 +2357,25 @@ const calculateAndPersistPeriodGrades = async ({
     achievementsMap.set(achievement.id, achievement)
   }
 
-  let updatedCount = 0
+  const existingRecords = await db
+    .select({ id: gradeRecords.id, studentId: gradeRecords.studentId })
+    .from(gradeRecords)
+    .where(and(
+      eq(gradeRecords.tenantId, tenantId),
+      eq(gradeRecords.subjectId, subjectId),
+      eq(gradeRecords.academicPeriodId, academicPeriodId),
+      eq(gradeRecords.isDeleted, false),
+      inArray(gradeRecords.studentId, studentIds),
+    ))
+
+  const existingByStudent = new Map(existingRecords.map((row) => [row.studentId, row.id]))
+  const recordsToPersist: Array<{
+    studentId: string
+    existingId: string | null
+    finalScore: number
+    gradeValue: string
+  }> = []
+
   for (const studentId of studentIds) {
     const studentScores = scores.filter((item) => item.studentId === studentId)
     const scoresByAchievement = new Map<string, { score: number; weight: number }[]>()
@@ -2370,50 +2401,53 @@ const calculateAndPersistPeriodGrades = async ({
     if (computedAchievements.length === 0) continue
 
     const finalScore = calculateSubjectPeriodScore(computedAchievements)
-    const [existing] = await db
-      .select({ id: gradeRecords.id })
-      .from(gradeRecords)
-      .where(and(
-        eq(gradeRecords.tenantId, tenantId),
-        eq(gradeRecords.studentId, studentId),
-        eq(gradeRecords.subjectId, subjectId),
-        eq(gradeRecords.academicPeriodId, academicPeriodId),
-        eq(gradeRecords.isDeleted, false),
-      ))
-      .limit(1)
+    recordsToPersist.push({
+      studentId,
+      existingId: existingByStudent.get(studentId) ?? null,
+      finalScore,
+      gradeValue: resolveDisplayedGradeValue({ score: finalScore, scale: resolvedScale }),
+    })
+  }
 
-    if (existing) {
-      await db.update(gradeRecords).set({
-        score: String(finalScore),
-        gradeValue: resolveDisplayedGradeValue({ score: finalScore, scale: resolvedScale }),
-        gradeValueType: resolvedScale.scaleType,
-        maxScore: String(resolvedScale.maxValue),
-        notes: 'Nota calculada automáticamente a partir de las actividades evaluativas.',
-        groupId,
-        academicYearId,
-        updatedAt: new Date(),
-        updatedBy: userId,
-      }).where(eq(gradeRecords.id, existing.id))
-    } else {
-      await db.insert(gradeRecords).values({
-        tenantId,
-        studentId,
-        subjectId,
-        academicPeriodId,
-        score: String(finalScore),
-        gradeValue: resolveDisplayedGradeValue({ score: finalScore, scale: resolvedScale }),
-        gradeValueType: resolvedScale.scaleType,
-        maxScore: String(resolvedScale.maxValue),
-        notes: 'Nota calculada automáticamente a partir de las actividades evaluativas.',
-        groupId,
-        academicYearId,
-        createdBy: userId,
-        updatedBy: userId,
-      })
+  let updatedCount = 0
+  await db.transaction(async (tx) => {
+    for (const record of recordsToPersist) {
+      if (record.existingId) {
+        await tx.update(gradeRecords).set({
+          score: String(record.finalScore),
+          gradeValue: record.gradeValue,
+          gradeValueType: resolvedScale.scaleType,
+          maxScore: String(resolvedScale.maxValue),
+          notes: 'Nota calculada automáticamente a partir de las actividades evaluativas.',
+          groupId,
+          academicYearId,
+          updatedAt: new Date(),
+          updatedBy: userId,
+        }).where(eq(gradeRecords.id, record.existingId))
+      } else {
+        await tx.insert(gradeRecords).values({
+          tenantId,
+          studentId: record.studentId,
+          subjectId,
+          academicPeriodId,
+          score: String(record.finalScore),
+          gradeValue: record.gradeValue,
+          gradeValueType: resolvedScale.scaleType,
+          maxScore: String(resolvedScale.maxValue),
+          notes: 'Nota calculada automáticamente a partir de las actividades evaluativas.',
+          groupId,
+          academicYearId,
+          createdBy: userId,
+          updatedBy: userId,
+        })
+      }
+      updatedCount += 1
     }
 
-    updatedCount += 1
-  }
+    if (auditLog) {
+      await writeAuditLog(tx as unknown as typeof db, auditLog(updatedCount))
+    }
+  })
 
   return updatedCount
 }
@@ -4833,6 +4867,14 @@ academicRoutes.post('/attendance', requirePermission(PERMISSIONS.ACADEMIC_WRITE)
 
   await ensureActivePeriod(db, tenantId, payload.academicPeriodId)
 
+  const studentIds = payload.items.map((item) => item.studentId)
+  const duplicatedStudentIds = findDuplicateIds(studentIds)
+  if (duplicatedStudentIds.length) {
+    throw new AppError('El lote contiene estudiantes repetidos. No se guardó ningún registro de asistencia.', 400, {
+      studentIds: duplicatedStudentIds,
+    })
+  }
+
   const validEnrollments = await db
     .select({ studentId: enrollments.studentId })
     .from(enrollments)
@@ -4867,51 +4909,53 @@ academicRoutes.post('/attendance', requirePermission(PERMISSIONS.ACADEMIC_WRITE)
   const existingByStudent = new Map(existingRecords.map((row) => [row.studentId, row.id]))
   let updatedCount = 0
 
-  for (const item of payload.items) {
-    const existingId = existingByStudent.get(item.studentId)
-    if (existingId) {
-      await db.update(attendanceRecords).set({
+  await db.transaction(async (tx) => {
+    for (const item of payload.items) {
+      const existingId = existingByStudent.get(item.studentId)
+      if (existingId) {
+        await tx.update(attendanceRecords).set({
+          status: item.status,
+          justified: item.justified,
+          notes: item.notes || null,
+          updatedAt: new Date(),
+          updatedBy: user.id,
+        }).where(and(eq(attendanceRecords.id, existingId), eq(attendanceRecords.tenantId, tenantId)))
+        updatedCount += 1
+        continue
+      }
+
+      await tx.insert(attendanceRecords).values({
+        tenantId,
+        studentId: item.studentId,
+        groupId: payload.groupId,
+        subjectId: payload.subjectId,
+        attendanceDate: payload.attendanceDate,
         status: item.status,
-        justified: item.justified,
         notes: item.notes || null,
-        updatedAt: new Date(),
+        academicYearId: payload.academicYearId,
+        academicPeriodId: payload.academicPeriodId,
+        justified: item.justified,
+        createdBy: user.id,
         updatedBy: user.id,
-      }).where(and(eq(attendanceRecords.id, existingId), eq(attendanceRecords.tenantId, tenantId)))
+      })
       updatedCount += 1
-      continue
     }
 
-    await db.insert(attendanceRecords).values({
+    await writeAuditLog(tx as unknown as typeof db, {
       tenantId,
-      studentId: item.studentId,
-      groupId: payload.groupId,
-      subjectId: payload.subjectId,
-      attendanceDate: payload.attendanceDate,
-      status: item.status,
-      notes: item.notes || null,
-      academicYearId: payload.academicYearId,
-      academicPeriodId: payload.academicPeriodId,
-      justified: item.justified,
-      createdBy: user.id,
-      updatedBy: user.id,
+      actorUserId: user.id,
+      entity: 'attendance_records',
+      entityId: `${payload.groupId}:${payload.subjectId}:${payload.attendanceDate}`,
+      action: 'attendance_save',
+      changes: {
+        academicYearId: payload.academicYearId,
+        academicPeriodId: payload.academicPeriodId,
+        groupId: payload.groupId,
+        subjectId: payload.subjectId,
+        attendanceDate: payload.attendanceDate,
+        items: payload.items.length,
+      },
     })
-    updatedCount += 1
-  }
-
-  await writeAuditLog(db, {
-    tenantId,
-    actorUserId: user.id,
-    entity: 'attendance_records',
-    entityId: `${payload.groupId}:${payload.subjectId}:${payload.attendanceDate}`,
-    action: 'attendance_save',
-    changes: {
-      academicYearId: payload.academicYearId,
-      academicPeriodId: payload.academicPeriodId,
-      groupId: payload.groupId,
-      subjectId: payload.subjectId,
-      attendanceDate: payload.attendanceDate,
-      items: payload.items.length,
-    },
   })
 
   return c.json(ok('Asistencia guardada', { updatedCount }))
@@ -4940,67 +4984,100 @@ academicRoutes.post('/gradebook', requirePermission(PERMISSIONS.ACADEMIC_WRITE),
     gradeId: group.gradeId,
   })
 
-  let updatedCount = 0
-  for (const item of payload.items) {
-    const [enrollment] = await db
-      .select({ id: enrollments.id })
-      .from(enrollments)
-      .where(and(eq(enrollments.tenantId, tenantId), eq(enrollments.studentId, item.studentId), eq(enrollments.academicYearId, payload.academicYearId), eq(enrollments.groupId, payload.groupId), eq(enrollments.isDeleted, false), ne(enrollments.enrollmentStatus, 'cancelled')))
-      .limit(1)
-    if (!enrollment) throw new AppError('Uno de los estudiantes ya no pertenece al curso seleccionado.', 409)
-
-    const [existing] = await db
-      .select({ id: gradeRecords.id })
-      .from(gradeRecords)
-      .where(and(eq(gradeRecords.tenantId, tenantId), eq(gradeRecords.studentId, item.studentId), eq(gradeRecords.subjectId, payload.subjectId), eq(gradeRecords.academicPeriodId, payload.academicPeriodId), eq(gradeRecords.isDeleted, false)))
-      .limit(1)
-
-    if (existing) {
-      await db.update(gradeRecords).set({
-        score: String(item.score),
-        gradeValue: resolveDisplayedGradeValue({ score: Number(item.score), scale: resolvedScale }),
-        gradeValueType: resolvedScale.scaleType,
-        maxScore: String(item.maxScore),
-        notes: item.notes || null,
-        groupId: payload.groupId,
-        academicYearId: payload.academicYearId,
-        updatedAt: new Date(),
-        updatedBy: user.id,
-      }).where(eq(gradeRecords.id, existing.id))
-    } else {
-      await db.insert(gradeRecords).values({
-        tenantId,
-        studentId: item.studentId,
-        subjectId: payload.subjectId,
-        academicPeriodId: payload.academicPeriodId,
-        score: String(item.score),
-        gradeValue: resolveDisplayedGradeValue({ score: Number(item.score), scale: resolvedScale }),
-        gradeValueType: resolvedScale.scaleType,
-        maxScore: String(item.maxScore),
-        notes: item.notes || null,
-        groupId: payload.groupId,
-        academicYearId: payload.academicYearId,
-        createdBy: user.id,
-        updatedBy: user.id,
-      })
-    }
-    updatedCount += 1
+  const studentIds = payload.items.map((item) => item.studentId)
+  const duplicatedStudentIds = findDuplicateIds(studentIds)
+  if (duplicatedStudentIds.length) {
+    throw new AppError('El lote contiene estudiantes repetidos. No se guardó ninguna nota.', 400, {
+      studentIds: duplicatedStudentIds,
+    })
   }
 
-  await writeAuditLog(db, {
-    tenantId,
-    actorUserId: user.id,
-    entity: 'grade_records',
-    entityId: payload.groupId,
-    action: 'gradebook_save',
-    changes: {
-      academicYearId: payload.academicYearId,
-      groupId: payload.groupId,
-      subjectId: payload.subjectId,
-      academicPeriodId: payload.academicPeriodId,
-      updatedCount,
-    },
-    ipAddress: c.req.header('cf-connecting-ip'),
+  const validEnrollments = await db
+    .select({ studentId: enrollments.studentId })
+    .from(enrollments)
+    .where(and(
+      eq(enrollments.tenantId, tenantId),
+      eq(enrollments.academicYearId, payload.academicYearId),
+      eq(enrollments.groupId, payload.groupId),
+      eq(enrollments.isDeleted, false),
+      ne(enrollments.enrollmentStatus, 'cancelled'),
+      inArray(enrollments.studentId, studentIds),
+    ))
+
+  const validStudentIds = new Set(validEnrollments.map((item) => item.studentId))
+  const invalidStudentIds = studentIds.filter((studentId) => !validStudentIds.has(studentId))
+  if (invalidStudentIds.length) {
+    throw new AppError('Uno o más estudiantes ya no pertenecen al curso seleccionado. No se guardó ninguna nota.', 409, {
+      studentIds: invalidStudentIds,
+    })
+  }
+
+  const existingRecords = await db
+    .select({ id: gradeRecords.id, studentId: gradeRecords.studentId })
+    .from(gradeRecords)
+    .where(and(
+      eq(gradeRecords.tenantId, tenantId),
+      eq(gradeRecords.subjectId, payload.subjectId),
+      eq(gradeRecords.academicPeriodId, payload.academicPeriodId),
+      eq(gradeRecords.isDeleted, false),
+      inArray(gradeRecords.studentId, studentIds),
+    ))
+
+  const existingByStudent = new Map(existingRecords.map((row) => [row.studentId, row.id]))
+  let updatedCount = 0
+
+  await db.transaction(async (tx) => {
+    for (const item of payload.items) {
+      const existingId = existingByStudent.get(item.studentId)
+      const gradeValue = resolveDisplayedGradeValue({ score: Number(item.score), scale: resolvedScale })
+
+      if (existingId) {
+        await tx.update(gradeRecords).set({
+          score: String(item.score),
+          gradeValue,
+          gradeValueType: resolvedScale.scaleType,
+          maxScore: String(item.maxScore),
+          notes: item.notes || null,
+          groupId: payload.groupId,
+          academicYearId: payload.academicYearId,
+          updatedAt: new Date(),
+          updatedBy: user.id,
+        }).where(eq(gradeRecords.id, existingId))
+      } else {
+        await tx.insert(gradeRecords).values({
+          tenantId,
+          studentId: item.studentId,
+          subjectId: payload.subjectId,
+          academicPeriodId: payload.academicPeriodId,
+          score: String(item.score),
+          gradeValue,
+          gradeValueType: resolvedScale.scaleType,
+          maxScore: String(item.maxScore),
+          notes: item.notes || null,
+          groupId: payload.groupId,
+          academicYearId: payload.academicYearId,
+          createdBy: user.id,
+          updatedBy: user.id,
+        })
+      }
+      updatedCount += 1
+    }
+
+    await writeAuditLog(tx as unknown as typeof db, {
+      tenantId,
+      actorUserId: user.id,
+      entity: 'grade_records',
+      entityId: payload.groupId,
+      action: 'gradebook_save',
+      changes: {
+        academicYearId: payload.academicYearId,
+        groupId: payload.groupId,
+        subjectId: payload.subjectId,
+        academicPeriodId: payload.academicPeriodId,
+        updatedCount,
+      },
+      ipAddress: c.req.header('cf-connecting-ip'),
+    })
   })
 
   return c.json(ok('Notas guardadas', { updatedCount }))
@@ -5993,7 +6070,7 @@ academicRoutes.post('/evaluation-activities/:activityId/scores', requirePermissi
     studentId: z.uuid(),
     score: z.coerce.number().min(0).max(100),
     observations: z.string().optional().or(z.null()),
-  }))
+  })).min(1).max(500)
 })), async (c) => {
   const db = c.get('db')
   const tenantId = c.get('tenantId')
@@ -6027,54 +6104,86 @@ academicRoutes.post('/evaluation-activities/:activityId/scores', requirePermissi
 
   const ranges = resolvedScale?.ranges ?? []
 
-  let updatedCount = 0
-  for (const item of scores) {
-    const perfRange = calculatePerformanceLevel(item.score, ranges)
-    
-    const [existing] = await db
-      .select({ id: activityScores.id })
-      .from(activityScores)
-      .where(and(
-        eq(activityScores.tenantId, tenantId),
-        eq(activityScores.activityId, activityId),
-        eq(activityScores.studentId, item.studentId),
-        eq(activityScores.isDeleted, false)
-      ))
-      .limit(1)
-
-    if (existing) {
-      await db
-        .update(activityScores)
-        .set({
-          score: String(item.score),
-          performanceLevel: perfRange ? perfRange.nationalLevel : null,
-          observations: item.observations || null,
-          gradedAt: new Date(),
-          gradedBy: user.id,
-          updatedAt: new Date(),
-          updatedBy: user.id
-        })
-        .where(eq(activityScores.id, existing.id))
-    } else {
-      await db
-        .insert(activityScores)
-        .values({
-          tenantId,
-          activityId,
-          studentId: item.studentId,
-          score: String(item.score),
-          performanceLevel: perfRange ? perfRange.nationalLevel : null,
-          observations: item.observations || null,
-          gradedAt: new Date(),
-          gradedBy: user.id,
-          createdBy: user.id,
-          updatedBy: user.id
-        })
-    }
-    updatedCount++
+  const studentIds = scores.map((item) => item.studentId)
+  const duplicatedStudentIds = findDuplicateIds(studentIds)
+  if (duplicatedStudentIds.length) {
+    throw new AppError('El lote contiene estudiantes repetidos. No se guardó ninguna nota.', 400, {
+      studentIds: duplicatedStudentIds,
+    })
   }
 
-  await writeAuditLog(db, { tenantId, actorUserId: user.id, entity: 'evaluation_activities', entityId: activityId, action: 'save_scores', changes: { updatedCount } })
+  const validEnrollments = await db
+    .select({ studentId: enrollments.studentId })
+    .from(enrollments)
+    .where(and(
+      eq(enrollments.tenantId, tenantId),
+      eq(enrollments.academicYearId, activity.academicYearId),
+      eq(enrollments.groupId, activity.groupId),
+      eq(enrollments.isDeleted, false),
+      ne(enrollments.enrollmentStatus, 'cancelled'),
+      inArray(enrollments.studentId, studentIds),
+    ))
+
+  const validStudentIds = new Set(validEnrollments.map((item) => item.studentId))
+  const invalidStudentIds = studentIds.filter((studentId) => !validStudentIds.has(studentId))
+  if (invalidStudentIds.length) {
+    throw new AppError('Uno o más estudiantes ya no pertenecen al curso de la actividad. No se guardó ninguna nota.', 409, {
+      studentIds: invalidStudentIds,
+    })
+  }
+
+  const existingScores = await db
+    .select({ id: activityScores.id, studentId: activityScores.studentId })
+    .from(activityScores)
+    .where(and(
+      eq(activityScores.tenantId, tenantId),
+      eq(activityScores.activityId, activityId),
+      eq(activityScores.isDeleted, false),
+      inArray(activityScores.studentId, studentIds),
+    ))
+
+  const existingByStudent = new Map(existingScores.map((row) => [row.studentId, row.id]))
+  let updatedCount = 0
+
+  await db.transaction(async (tx) => {
+    for (const item of scores) {
+      const perfRange = calculatePerformanceLevel(item.score, ranges)
+      const existingId = existingByStudent.get(item.studentId)
+
+      if (existingId) {
+        await tx
+          .update(activityScores)
+          .set({
+            score: String(item.score),
+            performanceLevel: perfRange ? perfRange.nationalLevel : null,
+            observations: item.observations || null,
+            gradedAt: new Date(),
+            gradedBy: user.id,
+            updatedAt: new Date(),
+            updatedBy: user.id
+          })
+          .where(eq(activityScores.id, existingId))
+      } else {
+        await tx
+          .insert(activityScores)
+          .values({
+            tenantId,
+            activityId,
+            studentId: item.studentId,
+            score: String(item.score),
+            performanceLevel: perfRange ? perfRange.nationalLevel : null,
+            observations: item.observations || null,
+            gradedAt: new Date(),
+            gradedBy: user.id,
+            createdBy: user.id,
+            updatedBy: user.id
+          })
+      }
+      updatedCount++
+    }
+
+    await writeAuditLog(tx as unknown as typeof db, { tenantId, actorUserId: user.id, entity: 'evaluation_activities', entityId: activityId, action: 'save_scores', changes: { updatedCount } })
+  })
   return c.json(ok('Notas guardadas', { updatedCount }))
 })
 
@@ -6579,15 +6688,14 @@ academicRoutes.post('/gradebook/calculate', requirePermission(PERMISSIONS.ACADEM
     academicPeriodId: payload.academicPeriodId,
     groupId: payload.groupId,
     subjectId: payload.subjectId,
-  })
-
-  await writeAuditLog(db, {
-    tenantId,
-    actorUserId: user.id,
-    entity: 'grade_records',
-    entityId: payload.groupId,
-    action: 'gradebook_calculate',
-    changes: { ...payload, updatedCount }
+    auditLog: (updatedCount) => ({
+      tenantId,
+      actorUserId: user.id,
+      entity: 'grade_records',
+      entityId: payload.groupId,
+      action: 'gradebook_calculate',
+      changes: { ...payload, updatedCount }
+    }),
   })
 
   return c.json(ok('Notas recalculadas y guardadas', { updatedCount }))

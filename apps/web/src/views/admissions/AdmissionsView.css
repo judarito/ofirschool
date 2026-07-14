@@ -47,6 +47,67 @@
   flex-wrap: wrap;
 }
 
+.admissions-toolbar__context {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.admissions-toolbar__context strong {
+  font-size: 0.9rem;
+}
+
+.admission-action-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.85rem;
+}
+
+.admission-action-card {
+  display: grid;
+  gap: 0.35rem;
+  min-height: 128px;
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--surface);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+}
+
+.admission-action-card:hover,
+.admission-action-card:focus-visible {
+  border-color: color-mix(in srgb, var(--brand-primary) 40%, var(--border));
+  box-shadow: 0 10px 24px color-mix(in srgb, var(--brand-primary) 14%, transparent);
+  transform: translateY(-1px);
+  outline: none;
+}
+
+.admission-action-card:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+  transform: none;
+  box-shadow: none;
+}
+
+.admission-action-card strong {
+  font-size: 1rem;
+}
+
+.admission-action-card small {
+  line-height: 1.4;
+  color: var(--text-muted);
+}
+
+.admission-action-card__eyebrow {
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: uppercase;
+  color: var(--brand-primary);
+}
+
 .admissions-queue-tabs {
   display: flex;
   gap: 0.55rem;
@@ -87,11 +148,61 @@
   flex: 1 1 180px;
 }
 
+.section-divider {
+  padding-top: 0.25rem;
+}
+
+.dynamic-section {
+  display: grid;
+  gap: 0.85rem;
+  padding: 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  background: var(--surface);
+}
+
+.dynamic-section__header {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.dynamic-section__header small {
+  color: var(--text-soft);
+}
+
+.field-checkbox {
+  align-items: flex-start;
+}
+
+.field-checkbox input {
+  width: auto;
+}
+
+.choice-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.choice-pill {
+  display: inline-flex;
+  width: auto;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--surface-soft);
+}
+
 @media (max-width: 900px) {
   .module-inline-summary,
   .admissions-toolbar,
   .admissions-toolbar__actions,
-  .admissions-advanced-filters {
+  .admissions-advanced-filters,
+  .admission-action-grid {
     display: grid;
   }
 

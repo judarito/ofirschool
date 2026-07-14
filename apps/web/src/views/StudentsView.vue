@@ -40,7 +40,7 @@
       :columns="columns"
       :fetcher="fetchStudents"
       search-placeholder="Buscar por nombre o documento"
-      create-label="Nuevo estudiante"
+      create-label="Registrar aspirante"
       :reload-key="reloadKey"
       @edit="openEdit"
       @delete="openDelete"
@@ -56,7 +56,7 @@
           <option v-for="group in filteredGroups" :key="group.id" :value="group.id">{{ group.name }}</option>
         </select>
         <button class="button button--ghost" type="button">Importar</button>
-        <button class="button button--brand" type="button" @click="openCreate">Nuevo estudiante</button>
+        <button class="button button--brand" type="button" @click="openCreate">Registrar aspirante</button>
       </template>
 
       <template #cell-firstName="{ row }">
@@ -86,7 +86,7 @@
       </template>
     </ListView>
 
-    <FormModal :open="isModalOpen" :title="editingId ? 'Editar estudiante' : 'Nuevo estudiante'" size="full" @close="closeModal">
+    <FormModal :open="isModalOpen" title="Editar estudiante" size="full" @close="closeModal">
       <form class="form-grid student-form-grid" @submit.prevent="submitForm">
         <label>
           Nombres
@@ -146,72 +146,7 @@
             <option value="inactive">Inactivo</option>
           </select>
         </label>
-        <section v-if="!editingId" class="form-grid__wide student-admission-wizard">
-          <div class="card-headline">
-            <div>
-              <h3>Datos de inscripción del año activo</h3>
-              <p>Completa la información anual de inscripción para guardar el estudiante.</p>
-            </div>
-          </div>
-          <div class="form-grid student-admission-grid">
-            <label>Año lectivo activo<input :value="academicContext.activeYearName" disabled /></label>
-            <label>Tipo de ingreso<select v-model="admissionForm.source"><option value="new_student">Alumno nuevo</option><option value="transfer">Traslado</option><option value="reentry">Reingreso</option></select></label>
-            <label>Grado solicitado<select v-model="admissionForm.requestedGradeId" required><option value="">Selecciona un grado</option><option v-for="grade in gradeOptions" :key="grade.id" :value="grade.id">{{ grade.name }}</option></select></label>
-            <label>Curso sugerido<select v-model="admissionForm.requestedGroupId"><option value="">Asignar después</option><option v-for="group in admissionGroupOptions" :key="group.id" :value="group.id">{{ group.name }}</option></select></label>
-            <div class="form-grid__wide section-divider"><strong>Acudiente principal</strong></div>
-            <label>Nombres acudiente<input v-model="admissionForm.guardian.firstName" required /></label>
-            <label>Apellidos acudiente<input v-model="admissionForm.guardian.lastName" required /></label>
-            <label>Tipo documento acudiente<select v-model="admissionForm.guardian.documentType" required><option v-for="option in guardianDocumentTypeOptions" :key="option.value" :value="option.value">{{ option.label }}</option></select></label>
-            <label>Documento acudiente<input v-model="admissionForm.guardian.documentNumber" required /></label>
-            <label>Teléfono<input v-model="admissionForm.guardian.phone" required /></label>
-            <label>Correo<input v-model="admissionForm.guardian.email" type="email" required /></label>
-            <label>Parentesco<select v-model="admissionForm.guardian.relationship" required><option value="madre">Madre</option><option value="padre">Padre</option><option value="abuelo">Abuelo/a</option><option value="tio">Tío/a</option><option value="acudiente">Acudiente</option><option value="otro">Otro</option></select></label>
-            <label class="form-grid__wide">Observaciones<textarea v-model="admissionForm.notes" placeholder="Información interna para admisiones" /></label>
-
-            <div class="form-grid__wide section-divider"><strong>Formulario dinámico</strong></div>
-            <div v-if="activeAdmissionFormLoading" class="form-grid__wide detail-panel">
-              <p class="detail-note">Cargando preguntas configuradas...</p>
-            </div>
-            <div v-else-if="activeAdmissionFormError" class="form-grid__wide detail-panel">
-              <p class="detail-note">{{ activeAdmissionFormError }}</p>
-            </div>
-            <div v-else-if="dynamicSections.length === 0" class="form-grid__wide detail-panel">
-              <p class="detail-note">No hay preguntas dinámicas publicadas para este año lectivo.</p>
-            </div>
-            <template v-else>
-              <section v-for="section in dynamicSections" :key="section.id" class="form-grid__wide dynamic-section">
-                <div class="dynamic-section__header">
-                  <strong>{{ section.title }}</strong>
-                  <small v-if="section.description">{{ section.description }}</small>
-                </div>
-                <div class="form-grid">
-                  <label v-for="field in section.fields" :key="field.code" :class="{ 'field-checkbox': field.fieldType === 'checkbox' }">
-                    <span>{{ field.label }}<strong v-if="field.isRequired"> *</strong></span>
-                    <select v-if="field.fieldType === 'select'" v-model="dynamicTextValues[field.code]" :required="field.isRequired">
-                      <option value="">Selecciona una opción</option>
-                      <option v-for="option in normalizeOptions(field.options)" :key="option.value" :value="option.value">{{ option.label }}</option>
-                    </select>
-                    <select v-else-if="field.fieldType === 'multiselect'" v-model="dynamicArrayValues[field.code]" multiple :required="field.isRequired">
-                      <option v-for="option in normalizeOptions(field.options)" :key="option.value" :value="option.value">{{ option.label }}</option>
-                    </select>
-                    <textarea v-else-if="field.fieldType === 'textarea'" v-model="dynamicTextValues[field.code]" :required="field.isRequired" :placeholder="field.placeholder || ''" />
-                    <input v-else-if="field.fieldType === 'checkbox'" v-model="dynamicBooleanValues[field.code]" type="checkbox" />
-                    <div v-else-if="field.fieldType === 'radio'" class="choice-row">
-                      <label v-for="option in normalizeOptions(field.options)" :key="option.value" class="choice-pill">
-                        <input v-model="dynamicTextValues[field.code]" type="radio" :value="option.value" />
-                        <span>{{ option.label }}</span>
-                      </label>
-                    </div>
-                    <input v-else v-model="dynamicTextValues[field.code]" :type="inputType(field.fieldType)" :required="field.isRequired" :placeholder="field.placeholder || ''" />
-                    <small v-if="field.helpText">{{ field.helpText }}</small>
-                  </label>
-                </div>
-              </section>
-            </template>
-          </div>
-        </section>
-
-        <section v-else class="form-grid__wide">
+        <section class="form-grid__wide">
           <div class="card-headline">
             <div>
               <h3>Datos de inscripci&oacute;n del a&ntilde;o activo</h3>
@@ -262,13 +197,7 @@
           </div>
         </section>
         <p v-if="feedback" class="action-feedback form-grid__wide">{{ feedback }}</p>
-        <div v-if="!editingId" class="modal-actions">
-          <button class="button button--ghost" type="button" @click="closeModal">Cancelar</button>
-          <button class="button button--brand" type="submit" :disabled="saving">
-            {{ saving ? 'Guardando...' : 'Guardar estudiante e inscripción' }}
-          </button>
-        </div>
-        <div v-else class="modal-actions">
+        <div class="modal-actions">
           <button class="button button--ghost" type="button" @click="closeModal">Cancelar</button>
           <button class="button button--brand" type="submit" :disabled="saving">
             {{ saving ? 'Guardando...' : 'Guardar' }}
@@ -289,7 +218,8 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import type { AcademicGradeDto, AdmissionActiveFormDto, AdmissionFormFieldDto, AdmissionFormSectionDto, CourseDto, StudentAdmissionProfileDto, StudentDto } from '@ofir/shared'
+import { useRouter } from 'vue-router'
+import type { AcademicGradeDto, CourseDto, StudentAdmissionProfileDto, StudentDto } from '@ofir/shared'
 import { api } from '../lib/api'
 import ConfirmDialog from '../components/ConfirmDialog.vue'
 import FormModal from '../components/FormModal.vue'
@@ -307,10 +237,8 @@ const studentToDelete = ref<StudentDto | null>(null)
 const admissionProfile = ref<StudentAdmissionProfileDto['admission'] | null>(null)
 const admissionProfileLoading = ref(false)
 const admissionProfileError = ref('')
-const activeAdmissionForm = ref<AdmissionActiveFormDto['form'] | null>(null)
-const activeAdmissionFormLoading = ref(false)
-const activeAdmissionFormError = ref('')
 const academicContext = useAcademicContextStore()
+const router = useRouter()
 const gradeOptions = ref<AcademicGradeDto[]>([])
 const courseOptions = ref<CourseDto[]>([])
 const filters = reactive({
@@ -386,91 +314,13 @@ const admissionForm = reactive({
     relationship: 'madre',
   },
 })
-const dynamicTextValues = reactive<Record<string, string>>({})
-const dynamicBooleanValues = reactive<Record<string, boolean>>({})
-const dynamicArrayValues = reactive<Record<string, string[]>>({})
-
 const admissionGroupOptions = computed(() =>
   admissionForm.requestedGradeId
     ? courseOptions.value.filter((course) => course.gradeId === admissionForm.requestedGradeId && (!selectedAcademicYearId.value || course.academicYearId === selectedAcademicYearId.value))
     : courseOptions.value.filter((course) => !selectedAcademicYearId.value || course.academicYearId === selectedAcademicYearId.value),
 )
 
-const hasAdmissionMinimumData = computed(() =>
-  Boolean(
-    selectedAcademicYearId.value &&
-    admissionForm.requestedGradeId &&
-    admissionForm.guardian.firstName.trim() &&
-    admissionForm.guardian.lastName.trim() &&
-    admissionForm.guardian.documentType &&
-    admissionForm.guardian.documentNumber.trim() &&
-    admissionForm.guardian.phone.trim() &&
-    admissionForm.guardian.email.trim(),
-  ),
-)
-
 const activeAdmission = computed(() => admissionProfile.value)
-const dynamicSections = computed<AdmissionFormSectionDto[]>(() => activeAdmissionForm.value?.sections ?? [])
-
-const normalizeOptions = (options: unknown) => {
-  if (!Array.isArray(options)) return []
-  return options.map((option) => {
-    if (typeof option === 'string') return { label: option, value: option }
-    const item = option as Record<string, unknown>
-    return { label: String(item.label ?? item.value ?? ''), value: String(item.value ?? item.label ?? '') }
-  })
-}
-
-const inputType = (fieldType: string) => {
-  if (fieldType === 'email') return 'email'
-  if (fieldType === 'date') return 'date'
-  if (fieldType === 'number' || fieldType === 'decimal') return 'number'
-  if (fieldType === 'datetime') return 'datetime-local'
-  return 'text'
-}
-
-const hasDynamicValue = (value: unknown) => {
-  if (value === null || value === undefined) return false
-  if (typeof value === 'string') return value.trim().length > 0
-  if (Array.isArray(value)) return value.length > 0
-  return true
-}
-
-const resetDynamicAnswers = () => {
-  Object.keys(dynamicTextValues).forEach((key) => delete dynamicTextValues[key])
-  Object.keys(dynamicBooleanValues).forEach((key) => delete dynamicBooleanValues[key])
-  Object.keys(dynamicArrayValues).forEach((key) => delete dynamicArrayValues[key])
-}
-
-const buildDynamicAnswers = () => ({
-  ...Object.fromEntries(Object.entries(dynamicTextValues).filter(([, value]) => hasDynamicValue(value))),
-  ...Object.fromEntries(Object.entries(dynamicBooleanValues).filter(([, value]) => value === true || value === false)),
-  ...Object.fromEntries(Object.entries(dynamicArrayValues).filter(([, value]) => value.length > 0)),
-})
-
-const validateDynamicRequiredFields = () => {
-  const answers = buildDynamicAnswers()
-  return dynamicSections.value
-    .flatMap((section) => section.fields)
-    .filter((field) => field.isRequired)
-    .filter((field) => !hasDynamicValue(answers[field.code]))
-    .map((field) => field.label)
-}
-
-const initializeDynamicAnswers = () => {
-  resetDynamicAnswers()
-  dynamicSections.value.forEach((section) => {
-    section.fields.forEach((field: AdmissionFormFieldDto) => {
-      if (field.fieldType === 'checkbox') {
-        dynamicBooleanValues[field.code] = false
-      } else if (field.fieldType === 'multiselect') {
-        dynamicArrayValues[field.code] = []
-      } else {
-        dynamicTextValues[field.code] = ''
-      }
-    })
-  })
-}
 
 const resetAdmissionForm = () => {
   admissionForm.requestedGradeId = gradeOptions.value[0]?.id ?? ''
@@ -486,7 +336,6 @@ const resetAdmissionForm = () => {
     email: '',
     relationship: 'madre',
   })
-  resetDynamicAnswers()
 }
 
 const resetForm = () => {
@@ -502,9 +351,6 @@ const resetForm = () => {
   admissionProfile.value = null
   admissionProfileLoading.value = false
   admissionProfileError.value = ''
-  activeAdmissionForm.value = null
-  activeAdmissionFormLoading.value = false
-  activeAdmissionFormError.value = ''
   editingId.value = ''
   resetAdmissionForm()
 }
@@ -533,30 +379,9 @@ const loadCatalogs = async () => {
   courseOptions.value = coursesResponse.data.items
 }
 
-const loadActiveAdmissionForm = async () => {
-  activeAdmissionForm.value = null
-  activeAdmissionFormError.value = ''
-
-  if (!selectedAcademicYearNumber.value) return
-
-  activeAdmissionFormLoading.value = true
-  try {
-    const response = await api.getActiveAdmissionForm(selectedAcademicYearNumber.value)
-    activeAdmissionForm.value = response.data.form
-    initializeDynamicAnswers()
-  } catch (error) {
-    activeAdmissionForm.value = null
-    activeAdmissionFormError.value = error instanceof Error ? error.message : 'No fue posible cargar el formulario de inscripción.'
-  } finally {
-    activeAdmissionFormLoading.value = false
-  }
-}
-
-const openCreate = async () => {
+const openCreate = () => {
   feedback.value = ''
-  resetForm()
-  isModalOpen.value = true
-  await loadActiveAdmissionForm()
+  void router.push({ name: 'admissions', query: { create: '1' } })
 }
 
 const loadAdmissionProfile = async (studentId: string) => {
@@ -618,19 +443,15 @@ const closeModal = () => {
   resetForm()
 }
 
-const saveStudentOnly = async () => {
+const updateStudentOnly = async () => {
+  if (!editingId.value) return
   const payload = { ...form }
 
   saving.value = true
   feedback.value = ''
   try {
-    if (editingId.value) {
-      await api.updateStudent(editingId.value, payload)
-      feedback.value = 'Estudiante actualizado correctamente.'
-    } else {
-      await api.createStudent(payload)
-      feedback.value = 'Estudiante creado correctamente.'
-    }
+    await api.updateStudent(editingId.value, payload)
+    feedback.value = 'Estudiante actualizado correctamente.'
 
     await listViewRef.value?.reload()
     closeModal()
@@ -641,67 +462,7 @@ const saveStudentOnly = async () => {
   }
 }
 
-const submitAdmissionWizard = async () => {
-  if (!selectedAcademicYearId.value) {
-    feedback.value = 'No hay un año lectivo activo para crear la inscripción.'
-    return
-  }
-  if (!hasAdmissionMinimumData.value) {
-    feedback.value = 'Completa grado solicitado y los datos obligatorios del acudiente.'
-    return
-  }
-  const missingDynamicFields = validateDynamicRequiredFields()
-  if (missingDynamicFields.length) {
-    feedback.value = `Faltan campos obligatorios del formulario: ${missingDynamicFields.join(', ')}.`
-    return
-  }
-
-  saving.value = true
-  feedback.value = ''
-  try {
-    await api.createManualAdmission({
-      academicYearId: selectedAcademicYearId.value,
-      requestedGradeId: admissionForm.requestedGradeId,
-      requestedGroupId: admissionForm.requestedGroupId || null,
-      source: admissionForm.source,
-      notes: admissionForm.notes || null,
-      student: {
-        firstName: form.firstName,
-        middleName: form.middleName || null,
-        lastName: form.lastName,
-        documentType: form.documentType,
-        documentNumber: form.documentNumber,
-        birthDate: form.birthDate,
-        gender: form.gender,
-        bloodType: form.bloodType || null,
-      },
-      guardian: {
-        firstName: admissionForm.guardian.firstName,
-        lastName: admissionForm.guardian.lastName,
-        documentType: admissionForm.guardian.documentType,
-        documentNumber: admissionForm.guardian.documentNumber,
-        phone: admissionForm.guardian.phone,
-        email: admissionForm.guardian.email,
-        relationship: admissionForm.guardian.relationship,
-      },
-      answers: buildDynamicAnswers(),
-    })
-    await listViewRef.value?.reload()
-    feedback.value = 'Estudiante e inscripción creados correctamente.'
-    closeModal()
-  } catch (error) {
-    feedback.value = error instanceof Error ? error.message : 'No fue posible crear la inscripción.'
-  } finally {
-    saving.value = false
-  }
-}
-
 const submitForm = async () => {
-  if (!editingId.value) {
-    await submitAdmissionWizard()
-    return
-  }
-
   if (editingId.value && activeAdmission.value) {
     saving.value = true
     feedback.value = ''
@@ -725,7 +486,7 @@ const submitForm = async () => {
     return
   }
 
-  await saveStudentOnly()
+  await updateStudentOnly()
 }
 
 const confirmDelete = async () => {

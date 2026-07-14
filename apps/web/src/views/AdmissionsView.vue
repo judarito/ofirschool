@@ -10,8 +10,6 @@
           <span>Año lectivo activo</span>
           <input :value="academicContext.activeYearName" disabled />
         </label>
-        <button class="button button--ghost" type="button" @click="openCreate">Registrar aspirante</button>
-        <button class="button button--brand" type="button" :disabled="!isSelectedYearActive" @click="openPendingQueue">Revisar pendientes</button>
       </template>
     </PageHeader>
 
@@ -25,10 +23,24 @@
         <small>{{ admissionProcess.startsOn || '--' }} a {{ admissionProcess.endsOn || '--' }}</small>
       </div>
       <div class="module-inline-summary__actions">
-        <button class="button button--ghost" type="button" :disabled="!isSelectedYearActive" @click="openProcess">Proceso</button>
         <button class="button button--ghost" type="button" :disabled="!isSelectedYearActive" @click="openPendingQueue">{{ primaryTask.actionLabel }}</button>
       </div>
     </SurfaceCard>
+
+    <section class="admission-action-grid" aria-label="Acciones principales de inscripción">
+      <button
+        v-for="action in admissionActions"
+        :key="action.key"
+        class="admission-action-card"
+        type="button"
+        :disabled="action.disabled"
+        @click="action.run"
+      >
+        <span class="admission-action-card__eyebrow">{{ action.eyebrow }}</span>
+        <strong>{{ action.title }}</strong>
+        <small>{{ action.description }}</small>
+      </button>
+    </section>
 
     <ListView
       ref="listViewRef"
@@ -45,23 +57,25 @@
     >
       <template #toolbar-actions>
         <div class="admissions-toolbar">
-          <div class="admissions-queue-tabs" role="tablist" aria-label="Filtros rápidos por estado">
-            <button
-              v-for="tab in queueTabs"
-              :key="tab.value"
-              class="chip-button"
-              :class="{ 'chip-button--active': filters.status === tab.value }"
-              type="button"
-              @click="setStatusFilter(tab.value)"
-            >
-              {{ tab.label }} <span>{{ tab.count }}</span>
-            </button>
+          <div class="admissions-toolbar__context">
+            <strong>Estado de solicitud</strong>
+            <div class="admissions-queue-tabs" role="tablist" aria-label="Filtros rápidos por estado">
+              <button
+                v-for="tab in queueTabs"
+                :key="tab.value"
+                class="chip-button"
+                :class="{ 'chip-button--active': filters.status === tab.value }"
+                type="button"
+                @click="setStatusFilter(tab.value)"
+              >
+                {{ tab.label }} <span>{{ tab.count }}</span>
+              </button>
+            </div>
           </div>
           <div class="admissions-toolbar__actions">
             <button class="button button--ghost" type="button" @click="showAdvancedFilters = !showAdvancedFilters">
               {{ showAdvancedFilters ? 'Ocultar filtros' : 'Más filtros' }}
             </button>
-            <button class="button button--ghost" type="button" @click="openCreate">Registrar aspirante</button>
           </div>
         </div>
         <div v-if="showAdvancedFilters" class="admissions-advanced-filters">
@@ -174,9 +188,9 @@
         <label>
           Tipo documento estudiante
           <select v-model="newAdmission.student.documentType">
-            <option value="TI">TI</option>
-            <option value="RC">RC</option>
-            <option value="CC">CC</option>
+            <option v-for="option in studentDocumentTypeOptions" :key="option.value" :value="option.value">
+              {{ option.label }}
+            </option>
           </select>
         </label>
         <label>
@@ -193,11 +207,22 @@
             <option value="masculino">Masculino</option>
             <option value="femenino">Femenino</option>
             <option value="otro">Otro</option>
+            <option value="no_informa">Prefiere no informar</option>
           </select>
         </label>
         <label>
           Grupo sanguíneo
-          <input v-model="newAdmission.student.bloodType" placeholder="O+" />
+          <select v-model="newAdmission.student.bloodType">
+            <option value="">Sin especificar</option>
+            <option value="O+">O+</option>
+            <option value="O-">O-</option>
+            <option value="A+">A+</option>
+            <option value="A-">A-</option>
+            <option value="B+">B+</option>
+            <option value="B-">B-</option>
+            <option value="AB+">AB+</option>
+            <option value="AB-">AB-</option>
+          </select>
         </label>
         <label>
           Nombres acudiente
@@ -210,9 +235,9 @@
         <label>
           Tipo documento acudiente
           <select v-model="newAdmission.guardian.documentType">
-            <option value="CC">CC</option>
-            <option value="CE">CE</option>
-            <option value="PP">Pasaporte</option>
+            <option v-for="option in guardianDocumentTypeOptions" :key="option.value" :value="option.value">
+              {{ option.label }}
+            </option>
           </select>
         </label>
         <label>
@@ -234,9 +259,54 @@
             <option value="padre">Padre</option>
             <option value="abuelo">Abuelo(a)</option>
             <option value="tio">Tío(a)</option>
+            <option value="acudiente">Acudiente</option>
             <option value="otro">Otro</option>
           </select>
         </label>
+        <label class="form-grid__wide">
+          Observaciones
+          <textarea v-model="newAdmission.notes" placeholder="Información interna para admisiones" />
+        </label>
+        <div class="form-grid__wide section-divider"><strong>Formulario dinámico</strong></div>
+        <div v-if="activeAdmissionFormLoading" class="form-grid__wide detail-panel">
+          <p class="detail-note">Cargando preguntas configuradas...</p>
+        </div>
+        <div v-else-if="activeAdmissionFormError" class="form-grid__wide detail-panel">
+          <p class="detail-note">{{ activeAdmissionFormError }}</p>
+        </div>
+        <div v-else-if="dynamicSections.length === 0" class="form-grid__wide detail-panel">
+          <p class="detail-note">No hay preguntas dinámicas publicadas para este año lectivo.</p>
+        </div>
+        <template v-else>
+          <section v-for="section in dynamicSections" :key="section.id" class="form-grid__wide dynamic-section">
+            <div class="dynamic-section__header">
+              <strong>{{ section.title }}</strong>
+              <small v-if="section.description">{{ section.description }}</small>
+            </div>
+            <div class="form-grid">
+              <label v-for="field in section.fields" :key="field.code" :class="{ 'field-checkbox': field.fieldType === 'checkbox' }">
+                <span>{{ field.label }}<strong v-if="field.isRequired"> *</strong></span>
+                <select v-if="field.fieldType === 'select'" v-model="dynamicTextValues[field.code]" :required="field.isRequired">
+                  <option value="">Selecciona una opción</option>
+                  <option v-for="option in normalizeOptions(field.options)" :key="option.value" :value="option.value">{{ option.label }}</option>
+                </select>
+                <select v-else-if="field.fieldType === 'multiselect'" v-model="dynamicArrayValues[field.code]" multiple :required="field.isRequired">
+                  <option v-for="option in normalizeOptions(field.options)" :key="option.value" :value="option.value">{{ option.label }}</option>
+                </select>
+                <textarea v-else-if="field.fieldType === 'textarea'" v-model="dynamicTextValues[field.code]" :required="field.isRequired" :placeholder="field.placeholder || ''" />
+                <input v-else-if="field.fieldType === 'checkbox'" v-model="dynamicBooleanValues[field.code]" type="checkbox" />
+                <div v-else-if="field.fieldType === 'radio'" class="choice-row">
+                  <label v-for="option in normalizeOptions(field.options)" :key="option.value" class="choice-pill">
+                    <input v-model="dynamicTextValues[field.code]" type="radio" :value="option.value" />
+                    <span>{{ option.label }}</span>
+                  </label>
+                </div>
+                <input v-else v-model="dynamicTextValues[field.code]" :type="inputType(field.fieldType)" :required="field.isRequired" :placeholder="field.placeholder || ''" />
+                <small v-if="field.helpText">{{ field.helpText }}</small>
+              </label>
+            </div>
+          </section>
+        </template>
         <div class="modal-actions">
           <button class="button button--ghost" type="button" @click="closeModal">Cancelar</button>
           <button class="button button--brand" type="submit" :disabled="busy">{{ busy ? 'Guardando...' : 'Crear solicitud' }}</button>
@@ -513,7 +583,18 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import type { AcademicGradeDto, AdmissionApplicationDetailDto, AdmissionApplicationDto, AdmissionOverviewDto, AdmissionProcessDto, CourseDto } from '@ofir/shared'
+import { useRoute, useRouter } from 'vue-router'
+import type {
+  AcademicGradeDto,
+  AdmissionActiveFormDto,
+  AdmissionApplicationDetailDto,
+  AdmissionApplicationDto,
+  AdmissionFormFieldDto,
+  AdmissionFormSectionDto,
+  AdmissionOverviewDto,
+  AdmissionProcessDto,
+  CourseDto,
+} from '@ofir/shared'
 import { api } from '../lib/api'
 import EmptyState from '../components/EmptyState.vue'
 import FormModal from '../components/FormModal.vue'
@@ -545,12 +626,17 @@ const selectedAdmissionDetail = ref<AdmissionApplicationDetailDto | null>(null)
 const actionAdmission = ref<AdmissionApplicationDto | null>(null)
 const modalReturnTarget = ref<'detail' | null>(null)
 const listViewRef = ref<InstanceType<typeof ListView> | null>(null)
+const route = useRoute()
+const router = useRouter()
 const listMeta = reactive({
   total: 0,
   page: 1,
   pageSize: 10,
 })
 const admissionOverview = ref<AdmissionOverviewDto | null>(null)
+const activeAdmissionForm = ref<AdmissionActiveFormDto['form'] | null>(null)
+const activeAdmissionFormLoading = ref(false)
+const activeAdmissionFormError = ref('')
 const academicContext = useAcademicContextStore()
 const selectedYear = computed(() => academicContext.selectedYear)
 const selectedYearNumber = computed(() => academicContext.selectedYearNumber)
@@ -587,11 +673,24 @@ const conversionForm = reactive({
   enrollmentStatus: 'active',
   enrollmentDate: new Date().toISOString().slice(0, 10),
 })
+const documentTypeOptions = [
+  { value: 'RC', label: 'RC - Registro civil' },
+  { value: 'TI', label: 'TI - Tarjeta de identidad' },
+  { value: 'CC', label: 'CC - Cédula de ciudadanía' },
+  { value: 'CE', label: 'CE - Cédula de extranjería' },
+  { value: 'PEP', label: 'PEP - Permiso especial de permanencia' },
+  { value: 'PPT', label: 'PPT - Permiso por protección temporal' },
+  { value: 'PAS', label: 'PAS - Pasaporte' },
+  { value: 'NES', label: 'NES - Número establecido por Secretaría' },
+]
+const studentDocumentTypeOptions = documentTypeOptions
+const guardianDocumentTypeOptions = documentTypeOptions.filter((option) => option.value !== 'RC' && option.value !== 'TI')
 const newAdmission = reactive({
   academicYearId: '',
   requestedGradeId: '',
   requestedGroupId: '',
   source: 'new_student',
+  notes: '',
   student: {
     firstName: '',
     middleName: '',
@@ -612,6 +711,9 @@ const newAdmission = reactive({
     relationship: 'madre',
   },
 })
+const dynamicTextValues = reactive<Record<string, string>>({})
+const dynamicBooleanValues = reactive<Record<string, boolean>>({})
+const dynamicArrayValues = reactive<Record<string, string[]>>({})
 
 const filteredCourseOptions = computed(() =>
   newAdmission.requestedGradeId
@@ -643,6 +745,99 @@ const queueTabs = computed(() =>
 )
 const primaryTask = computed(() => buildPrimaryTask(metrics.value))
 const statusModalTitle = computed(() => getStatusModalTitle(statusActionForm.status))
+const dynamicSections = computed<AdmissionFormSectionDto[]>(() => activeAdmissionForm.value?.sections ?? [])
+const admissionActions = computed(() => [
+  {
+    key: 'manual',
+    eyebrow: 'Caso individual',
+    title: 'Registrar aspirante',
+    description: 'Crea una solicitud interna cuando la familia no usa el formulario público.',
+    disabled: false,
+    run: () => {
+      void openCreate()
+    },
+  },
+  {
+    key: 'review',
+    eyebrow: 'Bandeja',
+    title: 'Revisar pendientes',
+    description: 'Filtra la cola hacia solicitudes nuevas o en revisión para tomar decisión.',
+    disabled: !isSelectedYearActive.value,
+    run: () => {
+      openPendingQueue()
+    },
+  },
+  {
+    key: 'process',
+    eyebrow: 'Formulario público',
+    title: 'Configurar proceso',
+    description: 'Define fechas y enlace público de inscripción para el año activo.',
+    disabled: !isSelectedYearActive.value,
+    run: () => {
+      openProcess()
+    },
+  },
+])
+
+const normalizeOptions = (options: unknown) => {
+  if (!Array.isArray(options)) return []
+  return options.map((option) => {
+    if (typeof option === 'string') return { label: option, value: option }
+    const item = option as Record<string, unknown>
+    return { label: String(item.label ?? item.value ?? ''), value: String(item.value ?? item.label ?? '') }
+  })
+}
+
+const inputType = (fieldType: string) => {
+  if (fieldType === 'email') return 'email'
+  if (fieldType === 'date') return 'date'
+  if (fieldType === 'number' || fieldType === 'decimal') return 'number'
+  if (fieldType === 'datetime') return 'datetime-local'
+  return 'text'
+}
+
+const hasDynamicValue = (value: unknown) => {
+  if (value === null || value === undefined) return false
+  if (typeof value === 'string') return value.trim().length > 0
+  if (Array.isArray(value)) return value.length > 0
+  return true
+}
+
+const resetDynamicAnswers = () => {
+  Object.keys(dynamicTextValues).forEach((key) => delete dynamicTextValues[key])
+  Object.keys(dynamicBooleanValues).forEach((key) => delete dynamicBooleanValues[key])
+  Object.keys(dynamicArrayValues).forEach((key) => delete dynamicArrayValues[key])
+}
+
+const buildDynamicAnswers = () => ({
+  ...Object.fromEntries(Object.entries(dynamicTextValues).filter(([, value]) => hasDynamicValue(value))),
+  ...Object.fromEntries(Object.entries(dynamicBooleanValues).filter(([, value]) => value === true || value === false)),
+  ...Object.fromEntries(Object.entries(dynamicArrayValues).filter(([, value]) => value.length > 0)),
+})
+
+const validateDynamicRequiredFields = () => {
+  const answers = buildDynamicAnswers()
+  return dynamicSections.value
+    .flatMap((section) => section.fields)
+    .filter((field) => field.isRequired)
+    .filter((field) => !hasDynamicValue(answers[field.code]))
+    .map((field) => field.label)
+}
+
+const initializeDynamicAnswers = () => {
+  resetDynamicAnswers()
+  dynamicSections.value.forEach((section) => {
+    section.fields.forEach((field: AdmissionFormFieldDto) => {
+      if (field.fieldType === 'checkbox') {
+        dynamicBooleanValues[field.code] = false
+      } else if (field.fieldType === 'multiselect') {
+        dynamicArrayValues[field.code] = []
+      } else {
+        dynamicTextValues[field.code] = ''
+      }
+    })
+  })
+}
 
 watch(
   () => newAdmission.requestedGradeId,
@@ -680,6 +875,7 @@ const resetNewAdmission = () => {
   newAdmission.requestedGradeId = gradeOptions.value[0]?.id ?? ''
   newAdmission.requestedGroupId = ''
   newAdmission.source = 'new_student'
+  newAdmission.notes = ''
   Object.assign(newAdmission.student, {
     firstName: '',
     middleName: '',
@@ -699,6 +895,7 @@ const resetNewAdmission = () => {
     email: '',
     relationship: 'madre',
   })
+  resetDynamicAnswers()
 }
 
 const setStatusFilter = (status: string) => {
@@ -727,6 +924,25 @@ const loadOverview = async () => {
   if (!selectedYearNumber.value) throw new Error('No se pudo resolver el año lectivo actual.')
   const response = await api.getAdmissionOverview(selectedYearNumber.value)
   admissionOverview.value = response.data
+}
+
+const loadActiveAdmissionForm = async () => {
+  activeAdmissionForm.value = null
+  activeAdmissionFormError.value = ''
+
+  if (!selectedYearNumber.value) return
+
+  activeAdmissionFormLoading.value = true
+  try {
+    const response = await api.getActiveAdmissionForm(selectedYearNumber.value)
+    activeAdmissionForm.value = response.data.form
+    initializeDynamicAnswers()
+  } catch (error) {
+    activeAdmissionForm.value = null
+    activeAdmissionFormError.value = error instanceof Error ? error.message : 'No fue posible cargar el formulario de inscripción.'
+  } finally {
+    activeAdmissionFormLoading.value = false
+  }
 }
 
 const fetchAdmissions = async ({ page, pageSize, query }: { page: number; pageSize: number; query: string }) => {
@@ -786,9 +1002,17 @@ const closeModal = () => {
   selectedAdmissionDetail.value = null
 }
 
-const openCreate = () => {
+const openCreate = async () => {
   resetNewAdmission()
   activeModal.value = 'create'
+  await loadActiveAdmissionForm()
+}
+
+const openCreateFromRoute = () => {
+  if (route.query.create !== '1') return
+  void openCreate()
+  const query = Object.fromEntries(Object.entries(route.query).filter(([key]) => key !== 'create'))
+  void router.replace({ path: route.path, query })
 }
 
 const openPendingQueue = () => {
@@ -830,6 +1054,12 @@ const saveProcess = async () => {
 }
 
 const createAdmission = async () => {
+  const missingDynamicFields = validateDynamicRequiredFields()
+  if (missingDynamicFields.length) {
+    feedback.value = `Faltan campos obligatorios del formulario: ${missingDynamicFields.join(', ')}.`
+    return
+  }
+
   busy.value = true
   try {
     await api.createManualAdmission({
@@ -837,8 +1067,10 @@ const createAdmission = async () => {
       requestedGradeId: newAdmission.requestedGradeId,
       requestedGroupId: newAdmission.requestedGroupId || null,
       source: newAdmission.source,
+      notes: newAdmission.notes || null,
       student: newAdmission.student,
       guardian: newAdmission.guardian,
+      answers: buildDynamicAnswers(),
     })
     await listViewRef.value?.reload()
     await loadOverview()
@@ -974,6 +1206,13 @@ watch(selectedYear, async () => {
 })
 
 watch(
+  () => route.query.create,
+  () => {
+    openCreateFromRoute()
+  },
+)
+
+watch(
   () => filters.gradeId,
   () => {
     if (!filteredAdmissionGroups.value.find((group) => group.id === filters.groupId)) {
@@ -987,6 +1226,7 @@ onMounted(async () => {
     await academicContext.loadAcademicYears()
   }
   await reload()
+  openCreateFromRoute()
 })
 </script>
 

@@ -10,9 +10,6 @@
           <span>Año lectivo activo</span>
           <input :value="academicContext.activeYearName" disabled />
         </label>
-        <button class="button button--ghost" type="button" @click="openAnnualClosure">Cierre anual</button>
-        <button class="button button--ghost" type="button" @click="openContinuity">Continuidad</button>
-        <button class="button button--brand" type="button" @click="openCreate">Matricular estudiante</button>
       </template>
     </PageHeader>
 
@@ -26,10 +23,23 @@
         <small>{{ activeYearName }} · {{ activeYearRange }}</small>
       </div>
       <div class="module-inline-summary__actions">
-        <button class="button button--ghost" type="button" @click="setViewMode('overview')">Bandeja</button>
         <button class="button button--ghost" type="button" @click="runPrimaryWorkflowAction">{{ primaryWorkflow.actionLabel }}</button>
       </div>
     </SurfaceCard>
+
+    <section class="enrollment-action-grid" aria-label="Acciones principales de matrícula">
+      <button
+        v-for="action in workflowActions"
+        :key="action.key"
+        class="enrollment-action-card"
+        type="button"
+        @click="action.run"
+      >
+        <span class="enrollment-action-card__eyebrow">{{ action.eyebrow }}</span>
+        <strong>{{ action.title }}</strong>
+        <small>{{ action.description }}</small>
+      </button>
+    </section>
 
     <ListView
       ref="listViewRef"
@@ -46,24 +56,14 @@
     >
       <template #toolbar-actions>
         <div class="enrollments-toolbar">
-          <div class="enrollments-view-tabs" role="tablist" aria-label="Flujos principales">
-            <button
-              v-for="tab in workflowTabs"
-              :key="tab.value"
-              class="chip-button"
-              :class="{ 'chip-button--active': viewMode === tab.value }"
-              type="button"
-              @click="setViewMode(tab.value)"
-            >
-              {{ tab.label }}
-            </button>
+          <div class="enrollments-toolbar__context">
+            <strong>Bandeja de consulta</strong>
+            <small>{{ enrollments.length }} matrículas visibles con los filtros actuales.</small>
           </div>
           <div class="enrollments-toolbar__actions">
             <button class="button button--ghost" type="button" @click="showAdvancedFilters = !showAdvancedFilters">
               {{ showAdvancedFilters ? 'Ocultar filtros' : 'Más filtros' }}
             </button>
-            <button class="button button--ghost" type="button" @click="exportEnrollments">Exportar</button>
-            <button class="button button--brand" type="button" @click="runPrimaryWorkflowAction">{{ primaryWorkflow.actionLabel }}</button>
           </div>
         </div>
         <div v-if="showAdvancedFilters" class="enrollments-advanced-filters">
@@ -262,11 +262,15 @@
           </label>
           <div class="modal-actions">
             <button class="button button--ghost" type="button" @click="closeModal">Cerrar</button>
-            <button class="button button--ghost" type="submit" :disabled="busy">Actualizar preview</button>
-            <button class="button button--brand" type="button" :disabled="busy || !selectedContinuityIds.length || hasOverbookedContinuitySelection" @click="executeContinuityBatch">
-              Ejecutar lote
+            <button class="button button--ghost" type="submit" :disabled="continuityActionBusy">
+              {{ continuityPreviewLoading ? 'Actualizando...' : 'Actualizar preview' }}
+            </button>
+            <button class="button button--brand" type="button" :disabled="continuityActionBusy || Boolean(continuityExecuteHint)" @click="executeContinuityBatch">
+              {{ continuityBatchRunning ? 'Ejecutando...' : 'Ejecutar lote' }}
             </button>
           </div>
+          <p v-if="continuityExecuteHint" class="form-note form-grid__wide">{{ continuityExecuteHint }}</p>
+          <p v-if="continuityFeedback" class="action-feedback form-grid__wide">{{ continuityFeedback }}</p>
         </form>
 
         <SurfaceCard v-if="continuityPreview" variant="ghost">
@@ -378,8 +382,45 @@
       </div>
     </FormModal>
 
-    <FormModal :open="activeModal === 'annual-close'" title="Cierre anual y promoción" size="full" presentation="drawer" @close="closeModal">
+    <FormModal class="annual-close-drawer" :open="activeModal === 'annual-close'" title="Cierre anual y promoción" size="full" presentation="drawer" @close="closeModal">
       <div class="stack">
+        <section class="annual-close-controls">
+          <label>
+            Grado
+            <select v-model="annualFilters.gradeId">
+              <option value="">Todos los grados</option>
+              <option v-for="grade in gradeOptions" :key="grade.id" :value="grade.id">{{ grade.name }}</option>
+            </select>
+          </label>
+          <label>
+            Curso
+            <select v-model="annualFilters.groupId">
+              <option value="">Todos los cursos</option>
+              <option v-for="group in annualFilterGroups" :key="group.id" :value="group.id">{{ group.name }}</option>
+            </select>
+          </label>
+          <label>
+            Buscar estudiante
+            <input v-model="annualFilters.query" placeholder="Nombre o documento" />
+          </label>
+          <label>
+            Decisión global
+            <select v-model="annualBulkDecision">
+              <option value="">Selecciona una decisión</option>
+              <option value="promoted">Promovido</option>
+              <option value="conditional">Condicional</option>
+              <option value="not_promoted">No promovido</option>
+              <option value="pending">Pendiente</option>
+            </select>
+          </label>
+          <div class="annual-close-controls__actions">
+            <button class="button button--ghost" type="button" @click="clearAnnualFilters">Limpiar filtros</button>
+            <button class="button button--ghost" type="button" :disabled="annualActionBusy" @click="applyAnnualFiltersAndBulkDecision">
+              {{ annualPreviewLoading ? 'Actualizando...' : annualFilterActionLabel }}
+            </button>
+          </div>
+        </section>
+
         <SurfaceCard v-if="annualPromotionPreview" variant="ghost">
           <div class="card-headline">
             <div>
@@ -412,14 +453,21 @@
         </SurfaceCard>
 
         <div class="modal-actions">
-          <button class="button button--ghost" type="button" :disabled="busy" @click="loadAnnualPromotionPreview">Actualizar preview</button>
-          <button class="button button--brand" type="button" :disabled="busy || annualDecisionItems.length === 0" @click="applyAnnualPromotionDecisions">
-            {{ busy ? 'Aplicando...' : 'Aplicar decisiones' }}
+          <button class="button button--brand" type="button" :disabled="annualActionBusy || annualDecisionItems.length === 0" @click="applyAnnualPromotionDecisions">
+            {{ annualApplying ? 'Aplicando...' : 'Aplicar decisiones' }}
           </button>
         </div>
+        <p v-if="annualFeedback" class="action-feedback">{{ annualFeedback }}</p>
 
         <div v-if="annualPromotionPreview?.items.length" class="detail-section-list">
-          <article v-for="item in annualPromotionPreview.items" :key="item.enrollmentId" class="detail-section-card">
+          <div class="annual-close-pagination">
+            <span>{{ annualPaginationLabel }}</span>
+            <div class="annual-close-pagination__actions">
+              <button class="button button--ghost" type="button" :disabled="annualPage <= 1" @click="annualPage -= 1">Anterior</button>
+              <button class="button button--ghost" type="button" :disabled="annualPage >= annualTotalPages" @click="annualPage += 1">Siguiente</button>
+            </div>
+          </div>
+          <article v-for="item in annualPagedItems" :key="item.enrollmentId" class="detail-section-card">
             <div class="field-row field-row--editor">
               <div>
                 <strong>{{ item.studentName }}</strong>
@@ -490,8 +538,16 @@ import { columns, formatDate, formatNumeric, originLabel, promotionDecisionLabel
 const activeModal = ref<'create' | 'continuity' | 'annual-close' | null>(null)
 const busy = ref(false)
 const feedback = ref('')
+const continuityFeedback = ref('')
+const continuityPreviewLoading = ref(false)
+const continuityBatchRunning = ref(false)
+const annualFeedback = ref('')
+const annualPreviewLoading = ref(false)
+const annualApplying = ref(false)
+const annualPage = ref(1)
+const annualPageSize = 25
+const annualBulkDecision = ref<'' | 'pending' | 'promoted' | 'not_promoted' | 'conditional'>('')
 const showAdvancedFilters = ref(false)
-const viewMode = ref<'overview' | 'create' | 'continuity' | 'annual-close'>('overview')
 const gradeOptions = ref<AcademicGradeDto[]>([])
 const courseOptions = ref<CourseDto[]>([])
 const enrollmentCandidates = ref<EnrollmentCandidateDto[]>([])
@@ -515,6 +571,11 @@ const filters = reactive({
   gradeId: '',
   groupId: '',
 })
+const annualFilters = reactive({
+  gradeId: '',
+  groupId: '',
+  query: '',
+})
 const newEnrollment = reactive({
   studentId: '',
   academicYearId: '',
@@ -536,11 +597,15 @@ const continuityForm = reactive({
 const activeYear = computed(() => academicContext.activeYear)
 const activeYearName = computed(() => academicContext.activeYearName)
 const activeYearRange = computed(() => activeYear.value ? `${activeYear.value.startsOn} a ${activeYear.value.endsOn}` : '--')
-const activeYearStatus = computed(() => activeYear.value?.status ?? 'planeado')
 const reloadKey = computed(() => `${selectedYear.value}-${filters.gradeId}-${filters.groupId}`)
 const filteredEnrollmentGroups = computed(() =>
   filters.gradeId
     ? courseOptions.value.filter((course) => course.gradeId === filters.gradeId && course.academicYearId === activeYear.value?.id)
+    : courseOptions.value.filter((course) => course.academicYearId === activeYear.value?.id),
+)
+const annualFilterGroups = computed(() =>
+  annualFilters.gradeId
+    ? courseOptions.value.filter((course) => course.gradeId === annualFilters.gradeId && course.academicYearId === activeYear.value?.id)
     : courseOptions.value.filter((course) => course.academicYearId === activeYear.value?.id),
 )
 
@@ -601,6 +666,13 @@ const overbookedContinuityGroupIds = computed(() => {
   return blocked
 })
 const hasOverbookedContinuitySelection = computed(() => overbookedContinuityGroupIds.value.size > 0)
+const continuityActionBusy = computed(() => busy.value || continuityPreviewLoading.value || continuityBatchRunning.value)
+const continuityExecuteHint = computed(() => {
+  if (!continuityPreview.value) return 'Actualiza el preview para ver candidatos antes de ejecutar el lote.'
+  if (hasOverbookedContinuitySelection.value) return 'Ajusta los grupos destino: hay selecciones que superan los cupos visibles.'
+  if (!selectedContinuityIds.value.length) return 'Selecciona al menos un estudiante elegible para ejecutar el lote.'
+  return ''
+})
 const approvedAdmissionStatuses = new Set(['accepted', 'converted'])
 const annualDecisionItems = computed(() =>
   annualPromotionPreview.value
@@ -610,13 +682,22 @@ const annualDecisionItems = computed(() =>
       }))
     : [],
 )
-const workflowTabs = computed(() => [
-  { value: 'overview', label: 'Bandeja' },
-  { value: 'create', label: 'Matricular' },
-  { value: 'continuity', label: 'Continuidad' },
-  { value: 'annual-close', label: 'Cierre anual' },
-])
-
+const annualActionBusy = computed(() => busy.value || annualPreviewLoading.value || annualApplying.value)
+const annualTotalPages = computed(() => Math.max(Math.ceil((annualPromotionPreview.value?.items.length ?? 0) / annualPageSize), 1))
+const annualPagedItems = computed(() => {
+  const start = (annualPage.value - 1) * annualPageSize
+  return annualPromotionPreview.value?.items.slice(start, start + annualPageSize) ?? []
+})
+const annualPaginationLabel = computed(() => {
+  const total = annualPromotionPreview.value?.items.length ?? 0
+  if (!total) return 'Sin estudiantes para mostrar'
+  const start = (annualPage.value - 1) * annualPageSize + 1
+  const end = Math.min(start + annualPageSize - 1, total)
+  return `Mostrando ${start}-${end} de ${total} estudiantes filtrados`
+})
+const annualFilterActionLabel = computed(() =>
+  annualBulkDecision.value ? 'Actualizar y aplicar decisión' : 'Actualizar resultados',
+)
 watch(
   () => newEnrollment.gradeId,
   () => {
@@ -625,6 +706,21 @@ watch(
     }
   },
 )
+
+watch(
+  () => annualFilters.gradeId,
+  () => {
+    if (!annualFilterGroups.value.find((group) => group.id === annualFilters.groupId)) {
+      annualFilters.groupId = ''
+    }
+  },
+)
+
+watch(annualTotalPages, (totalPages) => {
+  if (annualPage.value > totalPages) {
+    annualPage.value = totalPages
+  }
+})
 
 const metrics = computed(() => ({
   total: enrollments.value.length,
@@ -668,6 +764,35 @@ const primaryWorkflow = computed(() => {
     status: 'aprobado',
   }
 })
+const workflowActions = computed(() => [
+  {
+    key: 'create',
+    eyebrow: 'Caso individual',
+    title: 'Matricular estudiante',
+    description: 'Para un aspirante aprobado, traslado o caso puntual que no entra por lote.',
+    run: () => {
+      void openCreate()
+    },
+  },
+  {
+    key: 'continuity',
+    eyebrow: 'Proceso masivo',
+    title: 'Renovar o promover curso',
+    description: 'Para pasar estudiantes del año anterior al año activo en lote.',
+    run: () => {
+      void openContinuity()
+    },
+  },
+  {
+    key: 'annual-close',
+    eyebrow: 'Fin de año',
+    title: 'Registrar promoción final',
+    description: 'Para marcar promovido, no promovido o pendiente antes del siguiente año.',
+    run: () => {
+      void openAnnualClosure()
+    },
+  },
+])
 const resetForm = () => {
   newEnrollment.studentId = ''
   newEnrollment.academicYearId = academicContext.activeYearId
@@ -682,14 +807,37 @@ const resetForm = () => {
   candidatePage.value = 1
 }
 
-const setViewMode = (mode: 'overview' | 'create' | 'continuity' | 'annual-close') => {
-  viewMode.value = mode
-}
-
 const clearAdvancedFilters = () => {
   filters.gradeId = ''
   filters.groupId = ''
   showAdvancedFilters.value = false
+}
+
+const clearAnnualFilters = () => {
+  annualFilters.gradeId = ''
+  annualFilters.groupId = ''
+  annualFilters.query = ''
+  annualBulkDecision.value = ''
+  annualPage.value = 1
+}
+
+const applyAnnualBulkDecision = () => {
+  if (!annualBulkDecision.value || !annualPromotionPreview.value?.items.length) {
+    annualFeedback.value = 'Selecciona una decisión y actualiza el preview antes de aplicar cambios globales.'
+    return
+  }
+
+  annualPromotionPreview.value.items.forEach((item) => {
+    annualDecisionSelections.value[item.enrollmentId] = annualBulkDecision.value || item.suggestedPromotionStatus
+  })
+  annualFeedback.value = `Decisión "${promotionDecisionLabel(annualBulkDecision.value)}" aplicada a ${annualPromotionPreview.value.items.length} estudiantes filtrados. Revisa y luego guarda con "Aplicar decisiones".`
+}
+
+const applyAnnualFiltersAndBulkDecision = async () => {
+  await loadAnnualPromotionPreview()
+  if (annualBulkDecision.value && annualPromotionPreview.value?.items.length) {
+    applyAnnualBulkDecision()
+  }
 }
 
 const requireSelectedYearNumber = () => {
@@ -752,39 +900,68 @@ const selectCandidate = (item: unknown) => {
 }
 
 const loadContinuityPreview = async () => {
-  const year = requireSelectedYearNumber()
-  continuityPreview.value = null
-  selectedContinuityIds.value = []
-  continuityGroupSelections.value = {}
-  const response = await api.getEnrollmentContinuityPreview({
-    year,
-    mode: continuityForm.mode,
-    sourceGradeId: continuityForm.sourceGradeId,
-    query: continuityForm.query,
-  })
-  continuityPreview.value = response.data
-  selectedContinuityIds.value = response.data.items.filter((item) => item.eligible).map((item) => item.studentId)
-  continuityGroupSelections.value = Object.fromEntries(
-    response.data.items.map((item) => {
-      const sameNamedGroup = item.previousGroupName
-        ? item.suggestedGroupOptions.find((group) => group.name === item.previousGroupName)
-        : null
-      return [item.studentId, sameNamedGroup?.id ?? '']
-    }),
-  )
+  continuityPreviewLoading.value = true
+  continuityFeedback.value = 'Actualizando candidatos de continuidad...'
+  try {
+    const year = requireSelectedYearNumber()
+    continuityPreview.value = null
+    selectedContinuityIds.value = []
+    continuityGroupSelections.value = {}
+    const response = await api.getEnrollmentContinuityPreview({
+      year,
+      mode: continuityForm.mode,
+      sourceGradeId: continuityForm.sourceGradeId,
+      query: continuityForm.query,
+    })
+    continuityPreview.value = response.data
+    selectedContinuityIds.value = response.data.items.filter((item) => item.eligible).map((item) => item.studentId)
+    continuityGroupSelections.value = Object.fromEntries(
+      response.data.items.map((item) => {
+        const sameNamedGroup = item.previousGroupName
+          ? item.suggestedGroupOptions.find((group) => group.name === item.previousGroupName)
+          : null
+        return [item.studentId, sameNamedGroup?.id ?? '']
+      }),
+    )
+    continuityFeedback.value = response.data.totalCandidates
+      ? `Preview actualizado: ${response.data.eligibleCandidates} elegibles de ${response.data.totalCandidates} candidatos.`
+      : 'Preview actualizado: no hay candidatos con los filtros actuales.'
+  } catch (caught) {
+    continuityPreview.value = null
+    selectedContinuityIds.value = []
+    continuityGroupSelections.value = {}
+    continuityFeedback.value = caught instanceof Error ? caught.message : 'No fue posible actualizar el preview de continuidad.'
+  } finally {
+    continuityPreviewLoading.value = false
+  }
 }
 
 const loadAnnualPromotionPreview = async () => {
-  const year = requireSelectedYearNumber()
-  const response = await api.getAnnualPromotionPreview({
-    year,
-    gradeId: filters.gradeId,
-    groupId: filters.groupId,
-  })
-  annualPromotionPreview.value = response.data
-  annualDecisionSelections.value = Object.fromEntries(
-    response.data.items.map((item) => [item.enrollmentId, item.suggestedPromotionStatus]),
-  )
+  annualPreviewLoading.value = true
+  annualFeedback.value = 'Actualizando estudiantes para cierre anual...'
+  try {
+    const year = requireSelectedYearNumber()
+    const response = await api.getAnnualPromotionPreview({
+      year,
+      gradeId: annualFilters.gradeId,
+      groupId: annualFilters.groupId,
+      query: annualFilters.query,
+    })
+    annualPromotionPreview.value = response.data
+    annualPage.value = 1
+    annualDecisionSelections.value = Object.fromEntries(
+      response.data.items.map((item) => [item.enrollmentId, item.suggestedPromotionStatus]),
+    )
+    annualFeedback.value = response.data.totalStudents
+      ? `Preview actualizado: ${response.data.totalStudents} estudiantes visibles para cierre anual.`
+      : 'Preview actualizado: no hay estudiantes con los filtros actuales.'
+  } catch (caught) {
+    annualPromotionPreview.value = null
+    annualDecisionSelections.value = {}
+    annualFeedback.value = caught instanceof Error ? caught.message : 'No fue posible actualizar el preview de cierre anual.'
+  } finally {
+    annualPreviewLoading.value = false
+  }
 }
 
 const fetchEnrollments = async ({ page, pageSize, query }: { page: number; pageSize: number; query: string }) => {
@@ -825,7 +1002,6 @@ const closeModal = () => {
 }
 
 const openCreate = async () => {
-  viewMode.value = 'create'
   busy.value = true
   try {
     resetForm()
@@ -839,25 +1015,15 @@ const openCreate = async () => {
 }
 
 const openContinuity = async () => {
-  viewMode.value = 'continuity'
   activeModal.value = 'continuity'
-  busy.value = true
-  try {
-    await loadContinuityPreview()
-  } finally {
-    busy.value = false
-  }
+  continuityFeedback.value = ''
+  await loadContinuityPreview()
 }
 
 const openAnnualClosure = async () => {
-  viewMode.value = 'annual-close'
   activeModal.value = 'annual-close'
-  busy.value = true
-  try {
-    await loadAnnualPromotionPreview()
-  } finally {
-    busy.value = false
-  }
+  annualFeedback.value = ''
+  await loadAnnualPromotionPreview()
 }
 
 const runPrimaryWorkflowAction = () => {
@@ -923,10 +1089,6 @@ const confirmAdmissionApproval = async () => {
   await submitEnrollment(true)
 }
 
-const exportEnrollments = () => {
-  feedback.value = `Exportación preparada con ${enrollments.value.length} matrículas visibles.`
-}
-
 const toggleContinuitySelection = (studentId: string) => {
   selectedContinuityIds.value = selectedContinuityIds.value.includes(studentId)
     ? selectedContinuityIds.value.filter((id) => id !== studentId)
@@ -939,9 +1101,12 @@ const toggleSelectAllContinuity = () => {
 }
 
 const executeContinuityBatch = async () => {
-  if (!continuityPreview.value) return
+  if (!continuityPreview.value) {
+    continuityFeedback.value = 'Primero actualiza el preview para ver candidatos.'
+    return
+  }
   if (hasOverbookedContinuitySelection.value) {
-    feedback.value = 'La selección supera los cupos visibles de uno o más grupos. Ajusta las asignaciones antes de ejecutar.'
+    continuityFeedback.value = 'La selección supera los cupos visibles de uno o más grupos. Ajusta las asignaciones antes de ejecutar.'
     return
   }
 
@@ -955,11 +1120,12 @@ const executeContinuityBatch = async () => {
     }))
 
   if (!items.length) {
-    feedback.value = 'No hay estudiantes elegibles seleccionados para ejecutar la continuidad.'
+    continuityFeedback.value = 'No hay estudiantes elegibles seleccionados para ejecutar la continuidad.'
     return
   }
 
-  busy.value = true
+  continuityBatchRunning.value = true
+  continuityFeedback.value = `Ejecutando lote de ${items.length} estudiantes...`
   try {
     const response = await api.createEnrollmentContinuityBatch({
       academicYearId: continuityPreview.value.targetAcademicYearId,
@@ -970,15 +1136,22 @@ const executeContinuityBatch = async () => {
     })
     await reload()
     feedback.value = `${response.data.createdCount} matrículas creadas${response.data.skippedCount ? `, ${response.data.skippedCount} omitidas` : ''}.`
+    continuityFeedback.value = feedback.value
     activeModal.value = null
+  } catch (caught) {
+    continuityFeedback.value = caught instanceof Error ? caught.message : 'No fue posible ejecutar el lote de continuidad.'
   } finally {
-    busy.value = false
+    continuityBatchRunning.value = false
   }
 }
 
 const applyAnnualPromotionDecisions = async () => {
-  if (!annualPromotionPreview.value || !annualDecisionItems.value.length) return
-  busy.value = true
+  if (!annualPromotionPreview.value || !annualDecisionItems.value.length) {
+    annualFeedback.value = 'Actualiza el preview antes de aplicar decisiones.'
+    return
+  }
+  annualApplying.value = true
+  annualFeedback.value = `Aplicando ${annualDecisionItems.value.length} decisiones de cierre anual...`
   try {
     const response = await api.saveAnnualPromotionDecisions({
       academicYearId: annualPromotionPreview.value.academicYearId,
@@ -987,8 +1160,11 @@ const applyAnnualPromotionDecisions = async () => {
     await listViewRef.value?.reload()
     await loadAnnualPromotionPreview()
     feedback.value = `${response.data.updatedCount} decisiones de cierre anual aplicadas correctamente.`
+    annualFeedback.value = feedback.value
+  } catch (caught) {
+    annualFeedback.value = caught instanceof Error ? caught.message : 'No fue posible aplicar las decisiones de cierre anual.'
   } finally {
-    busy.value = false
+    annualApplying.value = false
   }
 }
 

@@ -63,6 +63,7 @@ import type {
   PiarRecordDto,
   PiarRecordDetailDto,
 } from '@ofir/shared'
+import { beginAppActivity, endAppActivity } from '../stores/app-activity'
 
 const API_URL = import.meta.env.VITE_API_URL ?? 'http://127.0.0.1:8787/api'
 const DEFAULT_TENANT_ID = '11111111-1111-1111-1111-111111111111'
@@ -101,63 +102,73 @@ const getHeaders = () => {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<ApiResponse<T>> {
-  const response = await fetch(`${API_URL}${path}`, {
-    ...init,
-    headers: {
-      ...getHeaders(),
-      ...withJsonHeader(init?.headers, init?.body ?? null),
-    },
-  })
+  beginAppActivity()
+  try {
+    const response = await fetch(`${API_URL}${path}`, {
+      ...init,
+      headers: {
+        ...getHeaders(),
+        ...withJsonHeader(init?.headers, init?.body ?? null),
+      },
+    })
 
-  const contentType = response.headers.get('content-type') ?? ''
-  const payload = contentType.includes('application/json')
-    ? await response.json()
-    : {
-        success: false,
-        message: await response.text(),
+    const contentType = response.headers.get('content-type') ?? ''
+    const payload = contentType.includes('application/json')
+      ? await response.json()
+      : {
+          success: false,
+          message: await response.text(),
+        }
+
+    if (!response.ok) {
+      const messageParts = [String(payload.message ?? 'Request failed')]
+      const errorCode = typeof payload.errorCode === 'string' ? payload.errorCode : ''
+      const requestId = typeof payload.requestId === 'string' ? payload.requestId : ''
+      const stage = typeof payload.details?.stage === 'string' ? payload.details.stage : ''
+
+      if (errorCode) messageParts.push(`Código: ${errorCode}`)
+      if (stage) messageParts.push(`Etapa: ${stage}`)
+      if (requestId) messageParts.push(`Solicitud: ${requestId}`)
+
+      const message = messageParts.join(' · ')
+      if (isAuthExpired(response.status, message)) {
+        clearSessionAndRedirectToLogin()
       }
-
-  if (!response.ok) {
-    const messageParts = [String(payload.message ?? 'Request failed')]
-    const errorCode = typeof payload.errorCode === 'string' ? payload.errorCode : ''
-    const requestId = typeof payload.requestId === 'string' ? payload.requestId : ''
-    const stage = typeof payload.details?.stage === 'string' ? payload.details.stage : ''
-
-    if (errorCode) messageParts.push(`Código: ${errorCode}`)
-    if (stage) messageParts.push(`Etapa: ${stage}`)
-    if (requestId) messageParts.push(`Solicitud: ${requestId}`)
-
-    const message = messageParts.join(' · ')
-    if (isAuthExpired(response.status, message)) {
-      clearSessionAndRedirectToLogin()
+      throw new Error(message)
     }
-    throw new Error(message)
-  }
 
-  return payload
+    return payload
+  } finally {
+    endAppActivity()
+  }
 }
 
 async function publicRequest<T>(path: string, init?: RequestInit): Promise<ApiResponse<T>> {
-  const response = await fetch(`${API_URL}${path}`, {
-    ...init,
-    headers: {
-      ...withJsonHeader(init?.headers, init?.body ?? null),
-    },
-  })
+  beginAppActivity()
+  try {
+    const response = await fetch(`${API_URL}${path}`, {
+      ...init,
+      headers: {
+        ...withJsonHeader(init?.headers, init?.body ?? null),
+      },
+    })
 
-  const contentType = response.headers.get('content-type') ?? ''
-  const payload = contentType.includes('application/json')
-    ? await response.json()
-    : {
-        success: false,
-        message: await response.text(),
-      }
+    const contentType = response.headers.get('content-type') ?? ''
+    const payload = contentType.includes('application/json')
+      ? await response.json()
+      : {
+          success: false,
+          message: await response.text(),
+        }
 
-  if (!response.ok) {
-    throw new Error(payload.message ?? 'Request failed')
+    if (!response.ok) {
+      throw new Error(payload.message ?? 'Request failed')
+    }
+
+    return payload
+  } finally {
+    endAppActivity()
   }
-
-  return payload
 }
 
 export const api = {
